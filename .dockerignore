@@ -1,0 +1,9 @@
+__pycache__
+cogs/__pycache__
+modules/__pycache__
+utils/__pycache__
+database
+.env
+.venv
+feature_toggle.py
+modules/db.old.py

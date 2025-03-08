@@ -1,0 +1,122 @@
+import discord
+import random
+import time
+from modules.database import get_or_create_user_level, update_user_xp, get_level_up_channel, apply_channel_boost
+from config import load_config
+import logging
+
+config = load_config()
+XP_SETTINGS = config["XP_SETTINGS"]
+
+def xp_to_next_level(level: int) -> int:
+    """Calculate XP required for next level using enhanced leveling algorithm"""
+    # Formula: next level at 100 * (level ^ 1.5) XP
+    return int(100 * (level ** 1.5))
+
+async def award_xp_and_handle_level_up(bot, guild_id, user_id, xp_amount, member, update_last_xp_time=False):
+    """
+    Awards XP to a user, handles level-up logic, and sends level-up notifications.
+    Returns a tuple of (new_xp, new_level, leveled_up)
+    
+    Parameters:
+    - update_last_xp_time: If True, updates the last_xp_time; False will keep the existing timestamp
+    """
+    # Get current user level data
+    xp, level, last_xp_time = await get_or_create_user_level(bot, guild_id, user_id)
+    
+    # Add XP
+    xp += xp_amount
+    
+    # Check for level up
+    leveled_up = False
+    while xp >= xp_to_next_level(level):
+        xp -= xp_to_next_level(level)
+        level += 1
+        leveled_up = True
+    
+    # Update database - only update last_xp_time if specified
+    current_time = time.time()
+    if update_last_xp_time:
+        await update_user_xp(bot, guild_id, user_id, xp, level, current_time)
+    else:
+        # Keep the existing last_xp_time 
+        await update_user_xp(bot, guild_id, user_id, xp, level, last_xp_time)
+    
+    # Handle level-up notification if needed
+    if leveled_up:
+        await send_level_up_notification(bot, guild_id, member, level)
+    
+    return (xp, level, leveled_up)
+
+async def send_level_up_notification(bot, guild_id, member, level):
+    """
+    Sends a level-up notification to the configured channel.
+    """
+    embed = discord.Embed(
+        title="Level Up!",
+        description=f"Congratulations {member.mention}, you've reached level {level}!",
+        color=discord.Color.gold()
+    )
+    # Set the author's avatar as the thumbnail
+    embed.set_thumbnail(url=member.avatar.url if member.avatar else member.default_avatar.url)
+    
+    # Check if a level-up channel is configured
+    level_up_channel_id = await get_level_up_channel(bot, guild_id)
+        
+    if level_up_channel_id:
+        channel = bot.get_channel(int(level_up_channel_id))
+        if channel:
+            await channel.send(embed=embed)
+        else:
+            logging.info(f"Configured channel with ID {level_up_channel_id} not found.")
+    else:
+        # Fallback: send to the member's guild's system channel if available
+        if member.guild.system_channel:
+            await member.guild.system_channel.send(embed=embed)
+        else:
+            logging.info(f"No level-up channel configured and no system channel available for guild {guild_id}")
+
+async def handle_message_xp(bot, message):
+    """Handle XP awarding for messages"""
+    # Ignore messages from bots
+    if message.author.bot:
+        return
+
+    # Only handle messages in guild channels
+    if not message.guild:
+        return
+
+    guild_id = str(message.guild.id)
+    user_id = str(message.author.id)
+    channel_id = str(message.channel.id)
+    current_time = time.time()
+
+    # Get or create user level
+    xp, level, last_xp_time = await get_or_create_user_level(bot, guild_id, user_id)
+
+    # Award XP only if enough time has passed since the last award
+    if current_time - last_xp_time >= XP_SETTINGS["COOLDOWN"]:
+        # Generate base XP amount
+        base_xp = random.randint(XP_SETTINGS["MIN"], XP_SETTINGS["MAX"])
+        
+        # Apply channel boost if applicable
+        awarded_xp = apply_channel_boost(base_xp, channel_id)
+        
+        # Award the boosted XP and update the last_xp_time
+        logging.info(f"Awarded {awarded_xp}xp to {message.author.name}")
+        await award_xp_and_handle_level_up(bot, guild_id, user_id, awarded_xp, message.author, update_last_xp_time=True)
+
+async def handle_reaction_xp(bot, reaction, user):
+    """Handle XP awarding for reactions"""
+    if user.bot or not reaction.message.guild:
+        return
+        
+    guild_id = str(reaction.message.guild.id)
+    user_id = str(user.id)
+    
+    # Ensure user exists in database
+    await get_or_create_user_level(bot, guild_id, user_id)
+    
+    # Award a small amount of XP for reactions, but DON'T update the last_xp_time
+    await award_xp_and_handle_level_up(bot, guild_id, user_id, 1, user, update_last_xp_time=False)
+    logging.info(f"Awarded 1 XP to {user.name} for reaction without updating cooldown")
