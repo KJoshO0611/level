@@ -179,7 +179,7 @@ async def _get_or_create_user_level(bot, guild_id, user_id):
     """
     # First try to get the user
     row = await bot.db.fetchrow(
-        "SELECT xp, level, last_xp_time FROM levels WHERE guild_id = $1 AND user_id = $2",
+        "SELECT xp, level, last_xp_time, last_role FROM levels WHERE guild_id = $1 AND user_id = $2",
         guild_id, user_id
     )
 
@@ -188,34 +188,35 @@ async def _get_or_create_user_level(bot, guild_id, user_id):
         xp = 0
         level = 1
         last_xp_time = 0
+        role = 1349303634906841128
         
         # In PostgreSQL, we use INSERT ... ON CONFLICT for upsert operations
         await bot.db.execute(
-            "INSERT INTO levels (guild_id, user_id, xp, level, last_xp_time) VALUES ($1, $2, $3, $4, $5)",
-            guild_id, user_id, xp, level, last_xp_time
+            "INSERT INTO levels (guild_id, user_id, xp, level, last_xp_time, last_role) VALUES ($1, $2, $3, $4, $5, $6)",
+            guild_id, user_id, xp, level, last_xp_time, role
         )
         return (xp, level, last_xp_time)
     else:
         # Return the row as a tuple (PostgreSQL returns a Record, which can be unpacked like a tuple)
-        return (row['xp'], row['level'], row['last_xp_time'])
+        return (row['xp'], row['level'], row['last_xp_time'], row['last_role'])
 
 async def get_or_create_user_level(bot, guild_id, user_id): # Public API functions with safety wrappers
     """Update a user's XP, level, and optionally last_xp_time with safety"""
     return await safe_db_operation(bot, "get_or_create_user_level", guild_id, user_id)
 
-async def _update_user_xp(bot, guild_id, user_id, xp, level, last_xp_time=None):
+async def _update_user_xp(bot, guild_id, user_id, xp, level, new_role, last_xp_time=None):
     """Update a user's XP, level, and optionally last_xp_time"""
     if last_xp_time is None:
         last_xp_time = time.time()
         
     await bot.db.execute(
-        "UPDATE levels SET xp = $1, level = $2, last_xp_time = $3 WHERE guild_id = $4 AND user_id = $5",
-        xp, level, last_xp_time, guild_id, user_id
+        "UPDATE levels SET xp = $1, level = $2, last_xp_time = $3, last_role = $4 WHERE guild_id = $5 AND user_id = $6",
+        xp, level, last_xp_time, new_role, guild_id, user_id
     )
 
-async def update_user_xp(bot, guild_id, user_id, xp, level, last_xp_time=None): # Public API functions with safety wrappers
+async def update_user_xp(bot, guild_id, user_id, xp, level, new_role, last_xp_time=None): # Public API functions with safety wrappers
     """Update a user's XP, level, and optionally last_xp_time with safety"""
-    return await safe_db_operation(bot, "update_user_xp", guild_id, user_id, xp, level, last_xp_time)
+    return await safe_db_operation(bot, "update_user_xp", guild_id, user_id, xp, level, last_xp_time, new_role)
 
 async def get_leaderboard(bot, guild_id, limit=10):
     """Get the top users by level and XP"""
