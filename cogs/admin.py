@@ -1,6 +1,6 @@
 import discord
 from discord.ext import commands
-from modules.database import set_channel_boost_db , remove_channel_boost_db
+from modules.database import set_channel_boost_db , remove_channel_boost_db, create_level_role, get_level_roles, delete_level_role
 import logging
 
 class AdminCommands(commands.Cog):
@@ -55,7 +55,7 @@ class AdminCommands(commands.Cog):
         channel_type = "voice" if isinstance(channel, discord.VoiceChannel) else "text"
         await ctx.send(f"✅ Set XP boost for {channel_type} channel '{channel.name}' to {boost_multiplier}x")
 
-    @commands.command(name="remove_channel_boost", aliases=["rboost"])
+    @commands.command(name="remove_channel_boost", aliases=["rcboost"])
     @commands.has_permissions(administrator=True)
     async def remove_channel_boost(self, ctx, channel_id: str):
         """Remove an XP boost from a specific channel"""
@@ -107,3 +107,59 @@ class AdminCommands(commands.Cog):
             embed.add_field(name="Text Channels", value=text_text, inline=False)
         
         await ctx.send(embed=embed)
+
+    @commands.command(name="set_level_roles", aliases=["slroles"])
+    @commands.has_permissions(administrator=True)
+    async def set_level_role(self, ctx, level: int, role: discord.Role):
+        """Set a role to be awarded at a specific level"""
+        if level < 1:
+            return await ctx.send("Level must be at least 1")
+        
+        # Check bot permissions
+        if not ctx.guild.me.guild_permissions.manage_roles:
+            return await ctx.send("I don't have permission to manage roles")
+            
+        # Check role hierarchy
+        if role.position >= ctx.guild.me.top_role.position:
+            return await ctx.send("That role is higher than my highest role, I can't assign it")
+        
+        # Store in database
+        success = await create_level_role(self.bot, str(ctx.guild.id), level, str(role.id))
+        
+        if success:
+            await ctx.send(f"✅ Role {role.name} will be awarded at level {level}")
+        else:
+            await ctx.send("❌ An error occurred while setting the level role")
+    
+    @commands.command(name="list_level_roles", aliases=["llroles"])
+    async def list_level_roles(self, ctx):
+        """List all level roles for this server"""
+        guild_level_roles = await get_level_roles(self.bot, str(ctx.guild.id))
+        
+        if not guild_level_roles:
+            return await ctx.send("No level roles are configured for this server")
+        
+        embed = discord.Embed(
+            title="Level Roles",
+            description="Roles awarded at specific levels",
+            color=discord.Color.blue()
+        )
+        
+        for level, role_id in sorted(guild_level_roles.items()):
+            role = ctx.guild.get_role(int(role_id))
+            role_name = role.name if role else f"Unknown Role (ID: {role_id})"
+            embed.add_field(name=f"Level {level}", value=role_name, inline=False)
+        
+        await ctx.send(embed=embed)
+    
+    @commands.command(name="delete_level_roles", aliases=["dlroles"])
+    @commands.has_permissions(administrator=True)
+    async def delete_level_role(self, ctx, level: int):
+        """Delete a level role mapping"""
+        success = await delete_level_role(self.bot, str(ctx.guild.id), level)
+        
+        if success:
+            await ctx.send(f"✅ Level {level} role mapping has been deleted")
+        else:
+            await ctx.send(f"❌ No role mapping found for level {level}")
+

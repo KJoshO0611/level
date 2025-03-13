@@ -1,18 +1,17 @@
 import discord
 import random
 import time
-from modules.database import get_or_create_user_level, update_user_xp, get_level_up_channel, apply_channel_boost
+from modules.database import get_or_create_user_level, update_user_xp, get_level_up_channel, apply_channel_boost, get_level_roles
 from config import load_config
 import logging
 
 config = load_config()
 XP_SETTINGS = config["XP_SETTINGS"]
-LEVEL_ROLES = config["LEVEL_ROLES"]
 
 def xp_to_next_level(level: int) -> int:
     """Calculate XP required for next level using enhanced leveling algorithm"""
     # Formula: next level at 100 * (level ^ 1.5) XP
-    return int(100 * (level ** 1.5))
+    return int(100 * (level ** 1.8))
 
 async def award_xp_and_handle_level_up(bot, guild_id, user_id, xp_amount, member, update_last_xp_time=False):
     """
@@ -25,6 +24,10 @@ async def award_xp_and_handle_level_up(bot, guild_id, user_id, xp_amount, member
     # Get current user level data
     xp, level, last_xp_time, last_assigned_role_id = await get_or_create_user_level(bot, guild_id, user_id)
     
+    # Track if this is a new user (for level 1 role assignment)
+    is_new_user = (xp == 0 and level == 1)
+
+
     # Add XP
     xp += xp_amount
     
@@ -42,18 +45,47 @@ async def award_xp_and_handle_level_up(bot, guild_id, user_id, xp_amount, member
     else:
         # Keep the existing last_xp_time 
         await update_user_xp(bot, guild_id, user_id, xp, level, last_xp_time, last_assigned_role_id)
-    
+
+    # Get level roles for this guild from the database
+    guild_level_roles = await get_level_roles(bot, guild_id)
+
+    # Handle level 1 role assignment for new users
+    if is_new_user and 1 in guild_level_roles:
+        role_id = guild_level_roles[1]
+        guild = member.guild
+        level_one_role = guild.get_role(int(role_id))
+        
+        if level_one_role:
+            try:
+                # Assign the level 1 role
+                await member.add_roles(level_one_role)
+                print(f"Assigned initial role {level_one_role.name} to {member.name} (level 1)")
+                
+                # Update the last assigned role in the database
+                await update_user_xp(bot, guild_id, user_id, xp, level, 
+                                    current_time if update_last_xp_time else last_xp_time, 
+                                    str(role_id))
+                last_assigned_role_id = str(role_id)  # Update the variable for later use
+            except discord.Forbidden:
+                print(f"Bot lacks permissions to manage roles.")
+            except discord.HTTPException as e:
+                print(f"Failed to manage roles: {e}")
+
     # Handle level-up notification if needed
     if leveled_up:
         await send_level_up_notification(bot, guild_id, member, level)
 
-                # Check for role assignment
-        if level in LEVEL_ROLES:
-            role_id = LEVEL_ROLES[level]
+        # Get level roles for this guild from the database
+        guild_level_roles = await get_level_roles(bot, guild_id)
+
+        # Check for role assignment
+        if level in guild_level_roles:
+            role_id = guild_level_roles[level]
             guild = member.guild
-            new_role = guild.get_role(role_id)
+            new_role = guild.get_role(int(role_id))
             
-            print(f"{last_assigned_role_id} new roles")
+            print(f"Level up: last_role={last_assigned_role_id}, new_role={role_id}")
+            print(f"Role object: {new_role}, Type: {type(new_role)}")
 
             if new_role:
                 try:
@@ -75,6 +107,8 @@ async def award_xp_and_handle_level_up(bot, guild_id, user_id, xp_amount, member
                     print(f"Bot lacks permissions to manage roles.")
                 except discord.HTTPException as e:
                     print(f"Failed to manage roles: {e}")
+            else:
+                print(f"did not change role")
     
     return (xp, level, leveled_up)
 

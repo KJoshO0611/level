@@ -18,15 +18,15 @@ XP_SETTINGS = {
     "IDLE_THRESHOLD": 300  # 5 minutes without speaking = idle
 }
 
-LEVEL_ROLES = {
-    1: 1349303634906841128,  # Replace with actual role IDs
-    10: 1349304838277562419,
-    20: 1349305333394440253,
-    30: 1349305944315662367,
-    40: 1349306704088530994,
-    50: 975670597147303996,
+#LEVEL_ROLES = {
+#    1: 1349303634906841128,  # Replace with actual role IDs
+#    10: 1349304838277562419,
+#    20: 1349305333394440253,
+#    30: 1349305944315662367,
+#    40: 1349306704088530994,
+#    50: 975670597147303996,
     # Add more level-role mappings as needed
-}
+#}
 
 # Paths
 PATHS = {
@@ -53,8 +53,8 @@ def load_config():
         "GUILD_ID": os.getenv("GUILDID"),
         "XP_SETTINGS": XP_SETTINGS,
         "PATHS": PATHS,
-        "DATABASE": DATABASE,
-        "LEVEL_ROLES": LEVEL_ROLES
+        "DATABASE": DATABASE
+        #"LEVEL_ROLES": LEVEL_ROLES
     }
     
     return config

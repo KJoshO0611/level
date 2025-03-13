@@ -6,8 +6,8 @@ import logging
 
 config = load_config()
 DATABASE = config["DATABASE"]
-# Update config to include PostgreSQL connection info
-# DB_PATH is replaced with connection parameters
+# Update config to include PostgreSQL bot.dbection info
+# DB_PATH is replaced with bot.dbection parameters
 
 
 # Dictionary to store channel XP boosts
@@ -18,8 +18,8 @@ db_lock = asyncio.Lock()
 
 
 async def init_db(bot):
-    """Initialize the database connection and create tables if they don't exist"""
-    # Connect to PostgreSQL
+    """Initialize the database bot.dbection and create tables if they don't exist"""
+    # bot.dbect to PostgreSQL
     bot.db = await asyncpg.create_pool(
         host=DATABASE["HOST"],
         database=DATABASE["NAME"],
@@ -57,12 +57,23 @@ async def init_db(bot):
             PRIMARY KEY (guild_id, channel_id))
     ''')
     
+    # Table for storing user roles
+    await bot.db.execute('''
+        CREATE TABLE IF NOT EXISTS level_roles  (
+            id SERIAL NOT NULL,
+            guild_id TEXT NOT NULL,
+            level INTEGER NOT NULL,
+            role_id TEXT NOT NULL,
+            PRIMARY KEY (id),          
+            UNIQUE(guild_id, level))
+    ''')
+
     # Load channel boosts from database
     await load_channel_boosts(bot)
 
 async def on_resumed(bot):
-    """Handle reconnection events"""
-    logging.info("Bot RESUMED connection. Checking for pending database operations...")
+    """Handle rebot.dbection events"""
+    logging.info("Bot RESUMED bot.dbection. Checking for pending database operations...")
     if pending_operations:
         logging.info(f"Found {len(pending_operations)} pending operations to process")
         await retry_pending_operations(bot)
@@ -137,10 +148,10 @@ async def safe_db_operation(bot, func_name, *args, **kwargs):
             # Handle specific database issues
             if isinstance(e, asyncpg.exceptions.DeadlockDetectedError):
                 logging.warning(f"Deadlock detected, retrying {func_name} (attempt {retries+1}/{MAX_RETRIES})")
-            elif isinstance(e, asyncpg.exceptions.ConnectionDoesNotExistError) or \
+            elif isinstance(e, asyncpg.exceptions.bot.dbectionDoesNotExistError) or \
                  isinstance(e, asyncpg.exceptions.InterfaceError):
-                logging.error(f"Lost database connection during {func_name}, attempting reconnect...")
-                await init_db(bot)  # Ensure the bot reconnects to the DB
+                logging.error(f"Lost database bot.dbection during {func_name}, attempting rebot.dbect...")
+                await init_db(bot)  # Ensure the bot rebot.dbects to the DB
             else:
                 pending_operations.append({
                     "function": func_name,
@@ -188,14 +199,17 @@ async def _get_or_create_user_level(bot, guild_id, user_id):
         xp = 0
         level = 1
         last_xp_time = 0
-        role = 1349303634906841128
+
+        # Get level 1 role from the database (if exists)
+        guild_level_roles = await get_level_roles(bot, guild_id)
+        last_role = guild_level_roles.get(1, None)  # Get level 1 role if available
         
         # In PostgreSQL, we use INSERT ... ON CONFLICT for upsert operations
         await bot.db.execute(
             "INSERT INTO levels (guild_id, user_id, xp, level, last_xp_time, last_role) VALUES ($1, $2, $3, $4, $5, $6)",
-            guild_id, user_id, xp, level, last_xp_time, role
+            guild_id, user_id, xp, level, last_xp_time, last_role
         )
-        return (xp, level, last_xp_time)
+        return (xp, level, last_xp_time, last_role)
     else:
         # Return the row as a tuple (PostgreSQL returns a Record, which can be unpacked like a tuple)
         return (row['xp'], row['level'], row['last_xp_time'], row['last_role'])
@@ -204,19 +218,20 @@ async def get_or_create_user_level(bot, guild_id, user_id): # Public API functio
     """Update a user's XP, level, and optionally last_xp_time with safety"""
     return await safe_db_operation(bot, "get_or_create_user_level", guild_id, user_id)
 
-async def _update_user_xp(bot, guild_id, user_id, xp, level, new_role, last_xp_time=None):
+async def _update_user_xp(bot, guild_id, user_id, xp, level, last_xp_time=None, last_role=None):
     """Update a user's XP, level, and optionally last_xp_time"""
     if last_xp_time is None:
         last_xp_time = time.time()
         
     await bot.db.execute(
         "UPDATE levels SET xp = $1, level = $2, last_xp_time = $3, last_role = $4 WHERE guild_id = $5 AND user_id = $6",
-        xp, level, last_xp_time, new_role, guild_id, user_id
+        xp, level, last_xp_time, last_role, guild_id, user_id
     )
 
-async def update_user_xp(bot, guild_id, user_id, xp, level, new_role, last_xp_time=None): # Public API functions with safety wrappers
+
+async def update_user_xp(bot, guild_id, user_id, xp, level, last_xp_time=None, last_role=None): # Public API functions with safety wrappers
     """Update a user's XP, level, and optionally last_xp_time with safety"""
-    return await safe_db_operation(bot, "update_user_xp", guild_id, user_id, xp, level, last_xp_time, new_role)
+    return await safe_db_operation(bot, "update_user_xp", guild_id, user_id, xp, level, last_xp_time, last_role)
 
 async def get_leaderboard(bot, guild_id, limit=10):
     """Get the top users by level and XP"""
@@ -303,3 +318,72 @@ def apply_channel_boost(base_xp, channel_id):
     if channel_id and channel_id in CHANNEL_XP_BOOSTS:
         return int(base_xp * CHANNEL_XP_BOOSTS[channel_id])
     return base_xp
+
+async def create_level_role(bot, guild_id, level, role_id):
+    """
+    Creates or updates a level-role mapping in the database
+    """
+    try:
+        # Check if mapping already exists
+        query = """
+        SELECT * FROM level_roles 
+        WHERE guild_id = $1 AND level = $2
+        """
+        existing = await bot.db.fetchrow(query, guild_id, level)
+        
+        if existing:
+            # Update existing mapping
+            query = """
+            UPDATE level_roles 
+            SET role_id = $3 
+            WHERE guild_id = $1 AND level = $2
+            """
+            await bot.db.execute(query, guild_id, level, role_id)
+        else:
+            # Create new mapping
+            query = """
+            INSERT INTO level_roles (guild_id, level, role_id) 
+            VALUES ($1, $2, $3)
+            """
+            await bot.db.execute(query, guild_id, level, role_id)
+        
+        return True
+    except Exception as e:
+        print(f"Database error in create_level_role: {e}")
+        return False
+    
+async def get_level_roles(bot, guild_id):
+    """
+    Gets all level-role mappings for a guild
+    Returns a dictionary of level -> role_id
+    """
+    try:
+        query = """
+        SELECT level, role_id FROM level_roles 
+        WHERE guild_id = $1
+        ORDER BY level
+        """
+        rows = await bot.db.fetch(query, guild_id)
+        
+        # Convert to dictionary
+        level_roles = {row['level']: row['role_id'] for row in rows}
+        return level_roles
+    except Exception as e:
+        print(f"Database error in get_level_roles: {e}")
+        return {}
+
+async def delete_level_role(bot, guild_id, level):
+    """
+    Deletes a level-role mapping
+    """
+    try:
+        query = """
+        DELETE FROM level_roles 
+        WHERE guild_id = $1 AND level = $2
+        RETURNING *
+        """
+        result = await bot.db.fetchrow(query, guild_id, level)
+        return result is not None  # True if something was deleted
+    except Exception as e:
+        print(f"Database error in delete_level_role: {e}")
+        return False

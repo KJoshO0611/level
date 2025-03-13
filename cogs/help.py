@@ -98,6 +98,3 @@ class CustomHelpCommand(commands.Cog):
             embed.add_field(name="Subcommands", value=subcommand_list, inline=False)
             
         await ctx.send(embed=embed)
-
-async def setup(bot):
-    await bot.add_cog(CustomHelpCommand(bot))
