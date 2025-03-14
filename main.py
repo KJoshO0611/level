@@ -3,14 +3,21 @@ from discord.ext import commands
 import os
 import logging
 from config import load_config
-from modules.database import init_db
+from modules.databasev2 import init_db, close_db
 from modules.voice_activity import start_voice_tracking, handle_voice_state_update
 from cogs.leveling import LevelingCommands
 from cogs.admin import AdminCommands
 from cogs.help import CustomHelpCommand
 
-logging.basicConfig(level=logging.INFO)
-logging.basicConfig(level=logging.WARN)
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO, 
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler('bot.log')
+    ]
+)
 
 # Initialize the bot
 def setup_bot():
@@ -30,18 +37,12 @@ def setup_bot():
                     vc.guild.voice_client
 
         async def on_voice_state_update(self, member, before, after):
-            await handle_voice_state_update(self, member, before, after)            
+            await handle_voice_state_update(self, member, before, after)  
+            
     # Create the bot instance
     bot = commands.Bot(command_prefix="!!", intents=intents)
     bot.processed_reactions = set()
 
-    # Event handlers
-    @bot.event
-    async def on_ready():
-        logging.info(f"{bot.user} is now online!")
-        await init_db(bot)
-        await start_voice_tracking(bot)
-    
     # Add cogs
     async def setup_cogs():
         await bot.add_cog(LevelingCommands(bot))
@@ -62,14 +63,26 @@ def run_bot():
     # Setup bot
     bot = setup_bot()
     
-    # Register the setup_cogs to be called when the bot is ready
+    # Register event handlers
     @bot.event
     async def on_ready():
         logging.info(f"{bot.user} is now online!")
-        await init_db(bot)
+        success = await init_db(bot)
+        if success:
+            logging.info("Database initialized successfully")
+        else:
+            logging.error("Failed to initialize database")
+            
         await start_voice_tracking(bot)
+        
+        # Start the image processor
+        from utils.async_image_processor import start_image_processor
+        await start_image_processor(bot)
+        logging.info("Image processor started")
+        
         await bot.setup_cogs()
         await bot.tree.sync()
+        logging.info(f"Bot is ready in {len(bot.guilds)} guilds")
 
     @bot.event
     async def on_message(message):
@@ -77,7 +90,7 @@ def run_bot():
         await bot.process_commands(message)
         # Then handle XP for messages
         from modules.levels import handle_message_xp
-        await handle_message_xp(bot, message)
+        await handle_message_xp(message)
 
     @bot.event
     async def on_voice_state_update(member, before, after):
@@ -100,7 +113,7 @@ def run_bot():
         bot.processed_reactions.add(reaction_id)
 
         from modules.levels import handle_reaction_xp
-        await handle_reaction_xp(bot, reaction, user)
+        await handle_reaction_xp(reaction, user)
         logging.info(f"Reaction XP processed for {user.name}")
     
     @bot.event 
@@ -135,14 +148,44 @@ def run_bot():
             for reaction in message.reactions:
                 if str(reaction.emoji) == str(payload.emoji):
                     from modules.levels import handle_reaction_xp
-                    await handle_reaction_xp(bot, reaction, user)
+                    await handle_reaction_xp(reaction, user)
                     logging.info(f"Raw reaction XP processed for {user.name}")
                     break
         except Exception as e:
-            logging.info(f"Error processing raw reaction: {e}")
+            logging.error(f"Error processing raw reaction: {e}")
+    
+    @bot.event
+    async def on_disconnect():
+        logging.warning("Bot disconnected from Discord")
+    
+    @bot.event
+    async def on_resumed():
+        logging.info("Bot connection resumed")
+        # Call resume function in database module if it exists
+        if hasattr(bot.db, 'on_resumed'):
+            await bot.db.on_resumed()
+            
+    @bot.event
+    async def on_error(event, *args, **kwargs):
+        logging.error(f"Error in event {event}", exc_info=True)
+    
+    # Clean shutdown handler
+    import signal
+    import sys
+    
+    def signal_handler(sig, frame):
+        logging.info("Shutdown signal received. Cleaning up...")
+        # Schedule the coroutine to run in the event loop
+        import asyncio
+        asyncio.create_task(close_db())
+        logging.info("Cleanup complete. Exiting...")
+        sys.exit(0)
+        
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
     
     # Run bot with token
-    bot.run(config["TOKEN"])
+    bot.run(config["TOKEN"], reconnect=True)
 
 if __name__ == "__main__":
     run_bot()

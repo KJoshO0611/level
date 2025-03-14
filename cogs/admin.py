@@ -1,14 +1,12 @@
 import discord
 from discord.ext import commands
-from modules.database import set_channel_boost_db , remove_channel_boost_db, create_level_role, get_level_roles, delete_level_role
+from modules.databasev2 import set_channel_boost_db, remove_channel_boost_db, create_level_role, get_level_roles, delete_level_role, set_level_up_channel, get_health_stats, invalidate_guild_cache, CHANNEL_XP_BOOSTS
 import logging
 
 class AdminCommands(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        # Reference to the channel boosts dictionary in main.py
-        # This ensures we're working with the same dictionary across the bot
-        from modules.database import CHANNEL_XP_BOOSTS
+        # Reference to the channel boosts dictionary in database.py
         self.channel_boosts = CHANNEL_XP_BOOSTS
 
     @commands.command(name="setlevelupchannel", aliases=["setlc"])
@@ -22,11 +20,9 @@ class AdminCommands(commands.Cog):
 
         guild_id = str(ctx.guild.id)
         channel_id = str(channel.id)
-        await self.bot.db.execute('''
-            INSERT OR REPLACE INTO server_config (guild_id, level_up_channel)
-            VALUES (?, ?)
-        ''', (guild_id, channel_id))
-        await self.bot.db.commit()
+        
+        # Use the improved database function
+        await set_level_up_channel(guild_id, channel_id)
         await ctx.send(f"Level-up notifications will now be sent to {channel.mention}")
 
     @commands.command(name="set_channel_boost", aliases=["boost"])
@@ -44,13 +40,8 @@ class AdminCommands(commands.Cog):
             await ctx.send("⚠️ Boost multiplier must be between 0.1 and 5.0")
             return
         
-        # Set the boost
-        self.channel_boosts[channel_id] = boost_multiplier
-        
-        logging.info(self.channel_boosts, boost_multiplier, channel)
-
-        # Save to database for persistence
-        await set_channel_boost_db(self.bot, str(ctx.guild.id), channel_id, boost_multiplier)
+        # Set the boost in database
+        await set_channel_boost_db(str(ctx.guild.id), channel_id, boost_multiplier)
         
         channel_type = "voice" if isinstance(channel, discord.VoiceChannel) else "text"
         await ctx.send(f"✅ Set XP boost for {channel_type} channel '{channel.name}' to {boost_multiplier}x")
@@ -60,10 +51,8 @@ class AdminCommands(commands.Cog):
     async def remove_channel_boost(self, ctx, channel_id: str):
         """Remove an XP boost from a specific channel"""
         if channel_id in self.channel_boosts:
-            del self.channel_boosts[channel_id]
-            
-            # Save to database for persistence
-            await remove_channel_boost_db(self.bot, str(ctx.guild.id), channel_id)
+            # Remove from database
+            await remove_channel_boost_db(str(ctx.guild.id), channel_id)
             
             channel = self.bot.get_channel(int(channel_id))
             channel_name = channel.name if channel else "Unknown channel"
@@ -74,41 +63,161 @@ class AdminCommands(commands.Cog):
 
     @commands.command(name="list_channel_boosts", aliases=["lcboost"])
     async def list_channel_boosts(self, ctx):
-        """List all channels with XP boosts"""
-        if not self.channel_boosts:
-            await ctx.send("No channel XP boosts are currently set.")
-            return
+        """List all channels with XP boosts for this guild"""
+        guild_id = str(ctx.guild.id)
         
-        embed = discord.Embed(
-            title="Channel XP Boosts",
-            description="These channels have XP multipliers applied:",
-            color=discord.Color.blue()
-        )
-        
-        voice_channels = []
-        text_channels = []
-        
-        for channel_id, multiplier in self.channel_boosts.items():
-            channel = self.bot.get_channel(int(channel_id))
-            if not channel:
-                continue
+        # Query database directly instead of using the in-memory dictionary
+        async with self.bot.db.acquire() as conn:
+            query = "SELECT channel_id, multiplier FROM channel_boosts WHERE guild_id = $1"
+            rows = await conn.fetch(query, guild_id)
+            
+            if not rows:
+                await ctx.send("No channel XP boosts are currently set for this server.")
+                return
+            
+            # Build the embed with boost information
+            embed = discord.Embed(
+                title="Channel XP Boosts",
+                description="These channels have XP multipliers applied:",
+                color=discord.Color.blue()
+            )
+            
+            voice_channels = []
+            text_channels = []
+            
+            for row in rows:
+                channel_id = row['channel_id']
+                multiplier = row['multiplier']
                 
-            if isinstance(channel, discord.VoiceChannel):
-                voice_channels.append((channel, multiplier))
-            elif isinstance(channel, discord.TextChannel):
-                text_channels.append((channel, multiplier))
-        
-        if voice_channels:
-            voice_text = "\n".join([f"**{c.name}**: {m}x XP" for c, m in voice_channels])
-            embed.add_field(name="Voice Channels", value=voice_text, inline=False)
-        
-        if text_channels:
-            text_text = "\n".join([f"**{c.name}**: {m}x XP" for c, m in text_channels])
-            embed.add_field(name="Text Channels", value=text_text, inline=False)
-        
-        await ctx.send(embed=embed)
+                channel = ctx.guild.get_channel(int(channel_id))
+                if not channel:
+                    continue
+                    
+                if isinstance(channel, discord.VoiceChannel):
+                    voice_channels.append((channel, multiplier))
+                elif isinstance(channel, discord.TextChannel):
+                    text_channels.append((channel, multiplier))
+            
+            if voice_channels:
+                voice_text = "\n".join([f"**{c.name}**: {m}x XP" for c, m in voice_channels])
+                embed.add_field(name="Voice Channels", value=voice_text, inline=False)
+            
+            if text_channels:
+                text_text = "\n".join([f"**{c.name}**: {m}x XP" for c, m in text_channels])
+                embed.add_field(name="Text Channels", value=text_text, inline=False)
+            
+            if not voice_channels and not text_channels:
+                await ctx.send("No valid channel XP boosts found for this server.")
+                return
+                
+            await ctx.send(embed=embed)
 
-    @commands.command(name="set_level_roles", aliases=["slroles"])
+    @commands.command(name="reload_channel_boosts", aliases=["rcb"])
+    @commands.has_permissions(administrator=True)
+    async def reload_channel_boosts(self, ctx):
+        """Reload channel XP boosts from the database into memory and show debug info"""
+        try:
+            # Import the function directly for clarity
+            from modules.databasev2 import load_channel_boosts, CHANNEL_XP_BOOSTS
+            
+            # Log the current state
+            logging.info(f"Before reload: CHANNEL_XP_BOOSTS contains {len(CHANNEL_XP_BOOSTS)} boosts")
+            logging.info(f"Current boost dictionary: {CHANNEL_XP_BOOSTS}")
+            
+            # Show status message to user
+            status_msg = await ctx.send("🔄 Reloading channel boosts...")
+            
+            # Call the function to reload boosts
+            loaded_count = await load_channel_boosts(self.bot)
+            
+            # Check the database directly to verify
+            guild_id = str(ctx.guild.id)
+            async with self.bot.db.acquire() as conn:
+                all_boosts_query = "SELECT COUNT(*) FROM channel_boosts"
+                all_count = await conn.fetchval(all_boosts_query)
+                
+                guild_boosts_query = "SELECT COUNT(*) FROM channel_boosts WHERE guild_id = $1"
+                guild_count = await conn.fetchval(guild_boosts_query, guild_id)
+                
+                guild_boosts_detail_query = "SELECT channel_id, multiplier FROM channel_boosts WHERE guild_id = $1"
+                guild_boosts = await conn.fetch(guild_boosts_detail_query, guild_id)
+            
+            # Build a detailed response
+            embed = discord.Embed(
+                title="Channel XP Boosts Reload Results",
+                color=discord.Color.blue()
+            )
+            
+            # Global stats
+            embed.add_field(
+                name="Global Stats", 
+                value=(f"Total boosts in database: {all_count}\n"
+                    f"Loaded into memory: {loaded_count if loaded_count >= 0 else 'Error'}\n"
+                    f"Current in-memory count: {len(CHANNEL_XP_BOOSTS)}"),
+                inline=False
+            )
+            
+            # This guild's stats
+            embed.add_field(
+                name=f"This Server ({ctx.guild.name})", 
+                value=f"Boosts for this server: {guild_count}",
+                inline=False
+            )
+            
+            # Show the actual channel boosts for this server
+            if guild_boosts:
+                boost_details = []
+                for row in guild_boosts:
+                    channel_id = row['channel_id']
+                    multiplier = row['multiplier']
+                    channel = ctx.guild.get_channel(int(channel_id))
+                    channel_name = channel.name if channel else f"Unknown (ID: {channel_id})"
+                    boost_details.append(f"• {channel_name}: {multiplier}x")
+                
+                embed.add_field(
+                    name="Channel Boosts in Database", 
+                    value="\n".join(boost_details),
+                    inline=False
+                )
+            else:
+                embed.add_field(
+                    name="Channel Boosts in Database", 
+                    value="No channel boosts found for this server",
+                    inline=False
+                )
+            
+            # Memory dictionary status
+            memory_boosts = []
+            for channel_id, multiplier in CHANNEL_XP_BOOSTS.items():
+                try:
+                    channel = ctx.guild.get_channel(int(channel_id))
+                    if channel:
+                        memory_boosts.append(f"• {channel.name}: {multiplier}x")
+                except:
+                    pass
+                    
+            if memory_boosts:
+                embed.add_field(
+                    name="Boosts In Memory (this server only)", 
+                    value="\n".join(memory_boosts[:10]) + 
+                        ("\n..." if len(memory_boosts) > 10 else ""),
+                    inline=False
+                )
+            else:
+                embed.add_field(
+                    name="Boosts In Memory (this server only)", 
+                    value="No boosts in memory for this server's channels",
+                    inline=False
+                )
+            
+            # Edit the status message
+            await status_msg.edit(content=None, embed=embed)
+            
+        except Exception as e:
+            logging.error(f"Error in reload_channel_boosts: {e}")
+            await ctx.send(f"❌ Error reloading channel boosts: {str(e)}")
+    
+    @commands.command(name="set_level_role", aliases=["slrole"])
     @commands.has_permissions(administrator=True)
     async def set_level_role(self, ctx, level: int, role: discord.Role):
         """Set a role to be awarded at a specific level"""
@@ -124,7 +233,7 @@ class AdminCommands(commands.Cog):
             return await ctx.send("That role is higher than my highest role, I can't assign it")
         
         # Store in database
-        success = await create_level_role(self.bot, str(ctx.guild.id), level, str(role.id))
+        success = await create_level_role(str(ctx.guild.id), level, str(role.id))
         
         if success:
             await ctx.send(f"✅ Role {role.name} will be awarded at level {level}")
@@ -134,7 +243,8 @@ class AdminCommands(commands.Cog):
     @commands.command(name="list_level_roles", aliases=["llroles"])
     async def list_level_roles(self, ctx):
         """List all level roles for this server"""
-        guild_level_roles = await get_level_roles(self.bot, str(ctx.guild.id))
+        # Use cached version for better performance
+        guild_level_roles = await get_level_roles(str(ctx.guild.id))
         
         if not guild_level_roles:
             return await ctx.send("No level roles are configured for this server")
@@ -152,14 +262,63 @@ class AdminCommands(commands.Cog):
         
         await ctx.send(embed=embed)
     
-    @commands.command(name="delete_level_roles", aliases=["dlroles"])
+    @commands.command(name="delete_level_role", aliases=["dlrole"])
     @commands.has_permissions(administrator=True)
     async def delete_level_role(self, ctx, level: int):
         """Delete a level role mapping"""
-        success = await delete_level_role(self.bot, str(ctx.guild.id), level)
+        success = await delete_level_role(str(ctx.guild.id), level)
         
         if success:
             await ctx.send(f"✅ Level {level} role mapping has been deleted")
         else:
             await ctx.send(f"❌ No role mapping found for level {level}")
-
+            
+    @commands.command(name="dbstatus", aliases=["dbhealth"])
+    @commands.has_permissions(administrator=True)
+    async def database_status(self, ctx):
+        """Display database health and status information"""
+        stats = await get_health_stats()
+        
+        embed = discord.Embed(
+            title="Database Status",
+            color=discord.Color.green() if stats["is_healthy"] else discord.Color.red()
+        )
+        
+        # Health status
+        status = "✅ Healthy" if stats["is_healthy"] else "❌ Unhealthy"
+        embed.add_field(name="Status", value=status, inline=False)
+        
+        # Additional info
+        if stats["last_check_time"]:
+            embed.add_field(name="Last Check", value=stats["last_check_time"], inline=True)
+        
+        if stats["last_recovery_time"]:
+            embed.add_field(name="Last Recovery", value=stats["last_recovery_time"], inline=True)
+        
+        embed.add_field(name="Consecutive Failures", value=str(stats["consecutive_failures"]), inline=True)
+        embed.add_field(name="Pending Operations", value=str(stats["pending_operations"]), inline=True)
+        
+        # Cache stats
+        cache_info = stats["cache_stats"]
+        embed.add_field(
+            name="Cache Usage", 
+            value=f"Users: {cache_info['level_cache_size']}\nConfig: {cache_info['config_cache_size']}\nRoles: {cache_info['role_cache_size']}",
+            inline=False
+        )
+        
+        # Failure reason if any
+        if stats["last_failure_reason"]:
+            embed.add_field(name="Last Error", value=stats["last_failure_reason"], inline=False)
+        
+        await ctx.send(embed=embed)
+        
+    @commands.command(name="clearcache", aliases=["cc"])
+    @commands.has_permissions(administrator=True)
+    async def clear_cache(self, ctx, guild_id: str = None):
+        """Clear the bot's cache for this guild or a specific guild"""
+        guild_id_to_clear = guild_id or str(ctx.guild.id)
+        
+        # Invalidate cache for the guild
+        invalidate_guild_cache(guild_id_to_clear)
+        
+        await ctx.send(f"✅ Cache cleared for guild ID: {guild_id_to_clear}")

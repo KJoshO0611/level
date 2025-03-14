@@ -1,7 +1,7 @@
 import discord
 import time
 from discord.ext import tasks
-from modules.database import get_or_create_user_level, apply_channel_boost
+from modules.databasev2 import get_or_create_user_level, apply_channel_boost
 from modules.levels import award_xp_and_handle_level_up
 from config import load_config
 import logging
@@ -88,8 +88,8 @@ def update_stream_watchers(bot, channel, streamer_id=None):
                         # Get member object to pass to award_xp function
                         member_obj = channel.guild.get_member(int(user_id))
                         if member_obj:
-                            asyncio.create_task(get_or_create_user_level(bot, guild_id, user_id))
-                            asyncio.create_task(award_xp_and_handle_level_up(bot, guild_id, user_id, xp_earned, member_obj))
+                            asyncio.create_task(get_or_create_user_level(guild_id, user_id))
+                            asyncio.create_task(award_xp_and_handle_level_up(guild_id, user_id, xp_earned, member_obj))
                     
                     # Update to watching state
                     vc_states[user_id] = {
@@ -131,8 +131,8 @@ def update_stream_watchers(bot, channel, streamer_id=None):
                         # Get member object
                         member_obj = channel.guild.get_member(int(user_id))
                         if member_obj:
-                            asyncio.create_task(get_or_create_user_level(bot, guild_id, user_id))
-                            asyncio.create_task(award_xp_and_handle_level_up(bot, guild_id, user_id, xp_earned, member_obj))
+                            asyncio.create_task(get_or_create_user_level(guild_id, user_id))
+                            asyncio.create_task(award_xp_and_handle_level_up(guild_id, user_id, xp_earned, member_obj))
                     
                     # Determine new state based on voice properties
                     new_state = "active"
@@ -147,7 +147,7 @@ def update_stream_watchers(bot, channel, streamer_id=None):
                     }
                     logging.info(f"User {member.name} is no longer watching a stream, now {new_state}")
 
-async def handle_voice_channel_exit(bot, guild_id, user_id, vc_states_dict, member):
+async def handle_voice_channel_exit(guild_id, user_id, vc_states_dict, member):
     """Process XP for a user leaving voice channel, considering their various states"""
     current_time = time.time()
     total_xp = 0
@@ -179,8 +179,8 @@ async def handle_voice_channel_exit(bot, guild_id, user_id, vc_states_dict, memb
     # Award the total XP if any was earned
     if total_xp > 0:
         logging.info(f"Awarding total of {total_xp} XP to {member.name} for voice activity")
-        await get_or_create_user_level(bot, guild_id, user_id)
-        await award_xp_and_handle_level_up(bot, guild_id, user_id, total_xp, member)
+        await get_or_create_user_level(guild_id, user_id)
+        await award_xp_and_handle_level_up(guild_id, user_id, total_xp, member)
     else:
         logging.info(f"No XP awarded to {member.name} for voice activity (total_xp = {total_xp})")
     
@@ -233,7 +233,7 @@ async def handle_voice_state_update(bot, member, before, after):
             vc_timers.pop(user_id, None)
             
             # Calculate total time and award XP for the entire session
-            await handle_voice_channel_exit(bot, guild_id, user_id, vc_states, member)
+            await handle_voice_channel_exit(guild_id, user_id, vc_states, member)
             
             # Clear other tracking data after processing
             if user_id in vc_states:
@@ -243,7 +243,6 @@ async def handle_voice_state_update(bot, member, before, after):
             
             # If user was streaming, update watchers in the channel they left
             if before.self_stream:
-                # FIXED: Removed await
                 update_stream_watchers(bot, before.channel)
     
     # User changes voice state (mute/deafen/stream/etc.) but stays in a channel
@@ -254,27 +253,22 @@ async def handle_voice_state_update(bot, member, before, after):
             
             # If user was streaming and changed channels, update both channels
             if before.self_stream:
-                # FIXED: Removed await
                 update_stream_watchers(bot, before.channel)
             
             # Check streaming status in new channel
             if after.self_stream:
-                # FIXED: Removed await
                 update_stream_watchers(bot, after.channel, user_id)
             else:
                 # Not streaming, check if should be watching someone else
-                # FIXED: Removed await
                 update_stream_watchers(bot, after.channel)
         
         # Check for stream start/stop
         if before.self_stream != after.self_stream:
             if after.self_stream:
                 # User started streaming
-                # FIXED: Removed await
                 update_stream_watchers(bot, after.channel, user_id)
             else:
                 # User stopped streaming
-                # FIXED: Removed await
                 update_stream_watchers(bot, after.channel)
             
         # Only process if it's a relevant state change
@@ -296,7 +290,7 @@ async def handle_voice_state_update(bot, member, before, after):
                 channel_id = voice_channels.get(user_id)
                 
                 if minutes_spent > 0:
-                    await get_or_create_user_level(bot, guild_id, user_id)
+                    await get_or_create_user_level(guild_id, user_id)
                     base_xp = minutes_spent * XP_RATES[previous_state]
                     
                     # Apply channel boost if channel_id is available
@@ -307,7 +301,7 @@ async def handle_voice_state_update(bot, member, before, after):
                         xp_earned = base_xp
                         logging.info(f"Voice state change XP without boost: {xp_earned}")
                         
-                    await award_xp_and_handle_level_up(bot, guild_id, user_id, xp_earned, member)
+                    await award_xp_and_handle_level_up(guild_id, user_id, xp_earned, member)
             
             # Update to new state
             new_state = determine_voice_state(after)
@@ -320,7 +314,7 @@ async def handle_voice_state_update(bot, member, before, after):
             if new_state == "muted" and user_id in stream_watchers:
                 del stream_watchers[user_id]
 
-async def handle_voice_speaking_update(bot, member, speaking):
+async def handle_voice_speaking_update(member, speaking):
     """Handle voice speaking update events"""
     user_id = str(member.id)
     if speaking:
@@ -339,7 +333,7 @@ async def handle_voice_speaking_update(bot, member, speaking):
             
             if idle_minutes > 0:
                 guild_id = str(member.guild.id)
-                await get_or_create_user_level(bot, guild_id, user_id)
+                await get_or_create_user_level(guild_id, user_id)
                 base_xp = idle_minutes * XP_RATES["idle"]
                 
                 # Apply channel boost if channel_id is available
@@ -350,7 +344,7 @@ async def handle_voice_speaking_update(bot, member, speaking):
                     xp_earned = base_xp
                     logging.info(f"Idle to active XP without boost: {xp_earned}")
                     
-                await award_xp_and_handle_level_up(bot, guild_id, user_id, xp_earned, member)
+                await award_xp_and_handle_level_up(guild_id, user_id, xp_earned, member)
             
             # Update to active state (only if not watching a stream)
             if user_id not in stream_watchers:
@@ -395,7 +389,7 @@ async def check_idle_users(bot):
                     channel_id = voice_channels.get(user_id)
                     
                     if active_minutes > 0:
-                        await get_or_create_user_level(bot, guild_id, user_id)
+                        await get_or_create_user_level(guild_id, user_id)
                         base_xp = active_minutes * XP_RATES["active"]
                         
                         # Apply channel boost if channel_id is available
@@ -406,7 +400,7 @@ async def check_idle_users(bot):
                             xp_earned = base_xp
                             logging.info(f"Active to idle XP without boost: {xp_earned}")
                             
-                        await award_xp_and_handle_level_up(bot, guild_id, user_id, xp_earned, member)
+                        await award_xp_and_handle_level_up(guild_id, user_id, xp_earned, member)
                     
                     # Update to idle state
                     vc_states[user_id] = {

@@ -1,0 +1,178 @@
+2025-03-14 20:13:16,433 - discord.client - INFO - logging in using static token
+2025-03-14 20:13:18,196 - discord.gateway - INFO - Shard ID None has connected to Gateway (Session ID: 33073f9abe608746fbf012a0d390d281).
+2025-03-14 20:13:20,210 - root - INFO - Clueless Levels#1880 is now online!
+2025-03-14 20:13:22,381 - root - INFO - Loaded 5 channel XP boosts
+2025-03-14 20:13:22,450 - root - INFO - Database connection pool initialized successfully
+2025-03-14 20:13:22,450 - root - INFO - Database initialized successfully
+2025-03-14 20:13:46,912 - root - INFO - Awarded 50xp to sleepytato_.
+2025-03-14 20:13:47,063 - root - INFO - Processed batch of 1 XP updates
+2025-03-14 20:14:07,717 - root - INFO - Raw reaction detected: User ID 1265697520315531354 added reaction <:fries:1266860296325038191>
+2025-03-14 20:14:07,719 - root - INFO - Reaction detected: sleepytato_. reacted with <:fries:1266860296325038191> to a message
+2025-03-14 20:14:07,719 - root - INFO - Awarded 1 XP to sleepytato_. for reaction without updating cooldown
+2025-03-14 20:14:07,719 - root - INFO - Reaction XP processed for sleepytato_.
+2025-03-14 20:14:07,802 - root - INFO - Processed batch of 1 XP updates
+2025-03-14 20:14:21,792 - root - ERROR - Error in level command: get_user_levels() missing 1 required positional argument: 'user_id'
+2025-03-14 20:14:22,808 - root - INFO - Bot is ready in 3 guilds
+2025-03-14 20:14:32,646 - root - INFO - Shutdown signal received. Cleaning up...
+2025-03-14 20:14:32,647 - root - INFO - Cleanup complete. Exiting...
+2025-03-14 20:16:06,047 - discord.client - INFO - logging in using static token
+2025-03-14 20:16:08,098 - discord.gateway - INFO - Shard ID None has connected to Gateway (Session ID: 7802a480210ef50978fec317a198c19f).
+2025-03-14 20:16:10,330 - root - INFO - Clueless Levels#1880 is now online!
+2025-03-14 20:16:12,671 - root - INFO - Loaded 5 channel XP boosts
+2025-03-14 20:16:12,748 - root - INFO - Database connection pool initialized successfully
+2025-03-14 20:16:12,748 - root - INFO - Database initialized successfully
+2025-03-14 20:16:29,341 - root - ERROR - Error in leaderboard command: 'str' object has no attribute 'db'
+2025-03-14 20:16:31,546 - root - INFO - Awarded 80xp to sleepytato_.
+2025-03-14 20:16:31,674 - root - INFO - Processed batch of 1 XP updates
+2025-03-14 20:16:39,229 - root - ERROR - Error in level command: get_user_levels() missing 1 required positional argument: 'user_id'
+2025-03-14 20:17:13,094 - root - INFO - Bot is ready in 3 guilds
+2025-03-14 20:17:33,958 - root - INFO - Awarded 80xp to sleepytato_.
+2025-03-14 20:17:34,027 - root - INFO - Processed batch of 1 XP updates
+2025-03-14 20:17:39,416 - root - ERROR - Error in level command: get_user_levels() missing 1 required positional argument: 'user_id'
+2025-03-14 20:17:53,539 - root - ERROR - Error in leaderboard command: 'str' object has no attribute 'db'
+2025-03-14 20:20:11,917 - root - INFO - Shutdown signal received. Cleaning up...
+2025-03-14 20:20:11,918 - root - INFO - Cleanup complete. Exiting...
+2025-03-14 20:20:18,160 - discord.client - INFO - logging in using static token
+2025-03-14 20:20:20,265 - discord.gateway - INFO - Shard ID None has connected to Gateway (Session ID: 1dea25cac89536ebb98a28cfd8db52f4).
+2025-03-14 20:20:22,319 - root - INFO - Clueless Levels#1880 is now online!
+2025-03-14 20:20:27,741 - root - INFO - Loaded 5 channel XP boosts
+2025-03-14 20:20:27,811 - root - INFO - Database connection pool initialized successfully
+2025-03-14 20:20:27,812 - root - INFO - Database initialized successfully
+2025-03-14 20:21:15,413 - root - INFO - (1363, 15)
+2025-03-14 20:21:17,354 - root - INFO - Awarded 100xp to sleepytato_.
+2025-03-14 20:21:17,494 - root - INFO - Processed batch of 1 XP updates
+2025-03-14 20:21:28,196 - root - INFO - Bot is ready in 3 guilds
+2025-03-14 20:21:36,788 - root - INFO - (1463, 15)
+2025-03-14 20:26:05,660 - root - INFO - (1463, 15)
+2025-03-14 20:26:07,767 - root - INFO - Awarded 65xp to sleepytato_.
+2025-03-14 20:26:07,983 - root - INFO - Processed batch of 1 XP updates
+2025-03-14 20:27:42,728 - root - ERROR - Error in leaderboard command: generate_leaderboard_image() got an unexpected keyword argument 'start_rank'
+2025-03-14 20:27:43,105 - root - INFO - Awarded 55xp to sleepytato_.
+2025-03-14 20:27:43,971 - root - INFO - Processed batch of 1 XP updates
+2025-03-14 20:28:00,625 - root - INFO - Shutdown signal received. Cleaning up...
+2025-03-14 20:28:00,625 - root - INFO - Cleanup complete. Exiting...
+2025-03-14 20:34:33,326 - discord.client - INFO - logging in using static token
+2025-03-14 20:34:35,116 - discord.gateway - INFO - Shard ID None has connected to Gateway (Session ID: 0cabfaa3e91cb11c0e721823f9d6f5a3).
+2025-03-14 20:34:37,331 - root - INFO - Clueless Levels#1880 is now online!
+2025-03-14 20:34:39,720 - root - INFO - Loaded 5 channel XP boosts
+2025-03-14 20:34:39,782 - root - INFO - Database connection pool initialized successfully
+2025-03-14 20:34:39,783 - root - INFO - Database initialized successfully
+2025-03-14 20:35:40,188 - root - INFO - Bot is ready in 3 guilds
+2025-03-14 20:37:49,374 - root - INFO - Awarded 95xp to sleepytato_.
+2025-03-14 20:37:49,517 - root - INFO - Processed batch of 1 XP updates
+2025-03-14 20:38:59,123 - root - INFO - Awarded 75xp to sleepytato_.
+2025-03-14 20:38:59,274 - root - INFO - Processed batch of 1 XP updates
+2025-03-14 20:39:19,069 - root - INFO - Voice state update: sleepytato_. moved from Kapitan Laro to None
+2025-03-14 20:39:20,081 - root - INFO - Voice state update: sleepytato_. moved from None to Kapitan Laro
+2025-03-14 20:40:02,370 - root - INFO - Awarded 50xp to sleepytato_.
+2025-03-14 20:40:02,446 - root - INFO - Processed batch of 1 XP updates
+2025-03-14 20:43:21,760 - root - INFO - Awarded 55xp to sleepytato_.
+2025-03-14 20:43:22,456 - root - INFO - Processed batch of 1 XP updates
+2025-03-14 20:44:39,802 - root - INFO - Active to idle XP with channel boost: Base XP: 25, Boosted XP: 37, Channel: 1024577206774673449
+2025-03-14 20:44:39,865 - root - INFO - Processed batch of 1 XP updates
+2025-03-14 20:47:22,155 - root - INFO - Shutdown signal received. Cleaning up...
+2025-03-14 20:47:22,155 - root - INFO - Cleanup complete. Exiting...
+2025-03-14 20:47:31,798 - discord.client - INFO - logging in using static token
+2025-03-14 20:47:33,587 - discord.gateway - INFO - Shard ID None has connected to Gateway (Session ID: 57c27fb735f70eae54b0b9801e6c1acc).
+2025-03-14 20:47:35,656 - root - INFO - Clueless Levels#1880 is now online!
+2025-03-14 20:47:39,164 - root - INFO - Loaded 5 channel XP boosts
+2025-03-14 20:47:39,230 - root - INFO - Database connection pool initialized successfully
+2025-03-14 20:47:39,230 - root - INFO - Database initialized successfully
+2025-03-14 20:47:48,989 - root - INFO - Voice state update: vindicta1120 moved from Kapitan Laro to Kapitan Laro
+2025-03-14 20:48:24,892 - root - INFO - Loaded 5 channel XP boosts
+2025-03-14 20:48:25,909 - root - INFO - Awarded 80xp to sleepytato_.
+2025-03-14 20:48:26,072 - root - INFO - Processed batch of 1 XP updates
+2025-03-14 20:48:39,597 - root - INFO - Bot is ready in 3 guilds
+2025-03-14 20:50:34,385 - root - INFO - Awarded 63xp to sleepytato_.
+2025-03-14 20:50:34,489 - root - INFO - Processed batch of 1 XP updates
+2025-03-14 20:50:48,414 - root - INFO - Loaded 5 channel XP boosts
+2025-03-14 20:52:33,919 - root - INFO - Loaded 5 channel XP boosts
+2025-03-14 20:52:34,562 - root - INFO - Awarded 76xp to sleepytato_.
+2025-03-14 20:52:34,640 - root - INFO - Processed batch of 1 XP updates
+2025-03-14 20:53:25,249 - root - INFO - Loaded 5 channel XP boosts
+2025-03-14 20:54:18,320 - root - INFO - Awarded 76xp to sleepytato_.
+2025-03-14 20:54:19,583 - root - INFO - Processed batch of 1 XP updates
+2025-03-14 20:56:27,401 - root - INFO - Shutdown signal received. Cleaning up...
+2025-03-14 20:56:27,401 - root - INFO - Cleanup complete. Exiting...
+2025-03-14 20:56:31,508 - discord.client - INFO - logging in using static token
+2025-03-14 20:56:33,191 - discord.gateway - INFO - Shard ID None has connected to Gateway (Session ID: e3879fb0bad9d2f9c6c8de79f06670a7).
+2025-03-14 20:56:35,258 - root - INFO - Clueless Levels#1880 is now online!
+2025-03-14 20:56:38,392 - root - INFO - Channel boosts loaded from database: 5 boosts
+2025-03-14 20:56:38,392 - root - INFO - Sample of loaded boosts: [('975667830743765002', 1.5), ('1044201035704569956', 2.0), ('1024577206774673449', 1.5)]
+2025-03-14 20:56:38,392 - root - INFO - Global CHANNEL_XP_BOOSTS now contains 5 boosts
+2025-03-14 20:56:38,463 - root - INFO - Database connection pool initialized successfully
+2025-03-14 20:56:38,464 - root - INFO - Database initialized successfully
+2025-03-14 20:57:21,296 - root - INFO - Awarded 45xp to sleepytato_.
+2025-03-14 20:57:21,432 - root - INFO - Processed batch of 1 XP updates
+2025-03-14 20:57:29,345 - root - INFO - Before reload: CHANNEL_XP_BOOSTS contains 5 boosts
+2025-03-14 20:57:29,345 - root - INFO - Current boost dictionary: {'975667830743765002': 1.5, '1044201035704569956': 2.0, '1024577206774673449': 1.5, '763985439639863369': 1.2999999523162842, '1343492412705607732': 4.5}
+2025-03-14 20:57:30,280 - root - INFO - Channel boosts loaded from database: 5 boosts
+2025-03-14 20:57:30,280 - root - INFO - Sample of loaded boosts: [('975667830743765002', 1.5), ('1044201035704569956', 2.0), ('1024577206774673449', 1.5)]
+2025-03-14 20:57:30,280 - root - INFO - Global CHANNEL_XP_BOOSTS now contains 5 boosts
+2025-03-14 20:57:38,821 - root - INFO - Bot is ready in 3 guilds
+2025-03-14 20:58:11,118 - discord.client - INFO - logging in using static token
+2025-03-14 20:58:12,976 - discord.gateway - INFO - Shard ID None has connected to Gateway (Session ID: d7edfa1d8927499e645f532f04440c62).
+2025-03-14 20:58:15,031 - root - INFO - Clueless Levels#1880 is now online!
+2025-03-14 20:58:17,508 - root - INFO - Channel boosts loaded from database: 5 boosts
+2025-03-14 20:58:17,508 - root - INFO - Sample of loaded boosts: [('975667830743765002', 1.5), ('1044201035704569956', 2.0), ('1024577206774673449', 1.5)]
+2025-03-14 20:58:17,509 - root - INFO - Global CHANNEL_XP_BOOSTS now contains 5 boosts
+2025-03-14 20:58:17,578 - root - INFO - Database connection pool initialized successfully
+2025-03-14 20:58:17,578 - root - INFO - Database initialized successfully
+2025-03-14 20:58:37,978 - root - INFO - Awarded 54xp to sleepytato_.
+2025-03-14 20:58:38,131 - root - INFO - Processed batch of 1 XP updates
+2025-03-14 20:59:09,061 - root - INFO - Before reload: CHANNEL_XP_BOOSTS contains 6 boosts
+2025-03-14 20:59:09,061 - root - INFO - Current boost dictionary: {'975667830743765002': 1.5, '1044201035704569956': 2.0, '1024577206774673449': 1.5, '763985439639863369': 1.2999999523162842, '1343492412705607732': 4.5, '1110188339660853398': 2.0}
+2025-03-14 20:59:09,914 - root - INFO - Channel boosts loaded from database: 6 boosts
+2025-03-14 20:59:09,916 - root - INFO - Sample of loaded boosts: [('975667830743765002', 1.5), ('1044201035704569956', 2.0), ('1024577206774673449', 1.5)]
+2025-03-14 20:59:09,916 - root - INFO - Global CHANNEL_XP_BOOSTS now contains 6 boosts
+2025-03-14 20:59:17,987 - root - INFO - Bot is ready in 3 guilds
+2025-03-14 21:01:42,881 - root - INFO - Awarded 49xp to sleepytato_.
+2025-03-14 21:01:42,947 - root - INFO - Processed batch of 1 XP updates
+2025-03-14 21:02:45,680 - root - INFO - Awarded 58xp to sleepytato_.
+2025-03-14 21:03:04,997 - root - ERROR - Error processing XP batch: connection was closed in the middle of operation
+2025-03-14 21:03:07,379 - root - INFO - Processed batch of 1 XP updates
+2025-03-14 21:03:48,255 - root - INFO - Awarded 81xp to sleepytato_.
+2025-03-14 21:03:48,420 - root - INFO - Processed batch of 1 XP updates
+2025-03-14 21:04:55,100 - root - INFO - Awarded 45xp to sleepytato_.
+2025-03-14 21:04:56,412 - root - INFO - Processed batch of 1 XP updates
+2025-03-14 21:06:25,954 - root - WARNING - Database health check failed: 
+2025-03-14 21:07:20,350 - root - INFO - Awarded 63xp to sleepytato_.
+2025-03-14 21:07:20,421 - root - INFO - Processed batch of 1 XP updates
+2025-03-14 21:07:26,089 - root - INFO - Database connection recovered
+2025-03-14 21:11:21,274 - root - INFO - Shutdown signal received. Cleaning up...
+2025-03-14 21:11:21,275 - root - INFO - Cleanup complete. Exiting...
+2025-03-14 21:11:25,374 - discord.client - INFO - logging in using static token
+2025-03-14 21:11:27,504 - discord.gateway - INFO - Shard ID None has connected to Gateway (Session ID: bce60c6997decf8f20ff834836376538).
+2025-03-14 21:11:29,532 - root - INFO - Clueless Levels#1880 is now online!
+2025-03-14 21:11:34,304 - root - INFO - Channel boosts loaded from database: 5 boosts
+2025-03-14 21:11:34,304 - root - INFO - Sample of loaded boosts: [('975667830743765002', 1.5), ('1024577206774673449', 1.5), ('763985439639863369', 1.2999999523162842)]
+2025-03-14 21:11:34,304 - root - INFO - Global CHANNEL_XP_BOOSTS now contains 5 boosts
+2025-03-14 21:11:34,383 - root - INFO - Database connection pool initialized successfully
+2025-03-14 21:11:34,383 - root - INFO - Database initialized successfully
+2025-03-14 21:11:34,383 - root - INFO - Image processor background task started
+2025-03-14 21:11:34,383 - root - INFO - Image processor started
+2025-03-14 21:12:34,788 - root - INFO - Bot is ready in 3 guilds
+2025-03-14 21:17:39,967 - root - INFO - Awarded 85xp to sleepytato_.
+2025-03-14 21:17:40,648 - root - INFO - Processed batch of 1 XP updates
+2025-03-14 21:17:49,241 - discord.ext.commands.bot - ERROR - Ignoring exception in command None
+discord.ext.commands.errors.CommandNotFound: Command "vll" is not found
+2025-03-14 21:17:59,946 - root - ERROR - Error processing image result: expected str, bytes or os.PathLike object, not coroutine
+2025-03-14 21:18:00,399 - root - INFO - Image generation completed in 0.07 seconds
+2025-03-14 21:24:25,325 - root - INFO - Shutdown signal received. Cleaning up...
+2025-03-14 21:24:25,325 - root - INFO - Cleanup complete. Exiting...
+2025-03-14 21:24:41,196 - discord.client - INFO - logging in using static token
+2025-03-14 21:24:43,389 - discord.gateway - INFO - Shard ID None has connected to Gateway (Session ID: de0ce4a7ca9393e371a7c56e28b00e8c).
+2025-03-14 21:24:45,426 - root - INFO - Clueless Levels#1880 is now online!
+2025-03-14 21:24:49,135 - root - INFO - Channel boosts loaded from database: 5 boosts
+2025-03-14 21:24:49,136 - root - INFO - Sample of loaded boosts: [('975667830743765002', 1.5), ('1024577206774673449', 1.5), ('763985439639863369', 1.2999999523162842)]
+2025-03-14 21:24:49,136 - root - INFO - Global CHANNEL_XP_BOOSTS now contains 5 boosts
+2025-03-14 21:24:49,223 - root - INFO - Database connection pool initialized successfully
+2025-03-14 21:24:49,223 - root - INFO - Database initialized successfully
+2025-03-14 21:24:49,244 - root - INFO - Image processor background task started
+2025-03-14 21:24:49,245 - root - INFO - Image processor started
+2025-03-14 21:25:49,644 - root - INFO - Bot is ready in 3 guilds
+2025-03-14 21:26:23,807 - root - ERROR - Error updating message with image: Message.edit() got an unexpected keyword argument 'file'
+2025-03-14 21:26:24,878 - root - INFO - Awarded 72xp to sleepytato_.
+2025-03-14 21:26:24,991 - root - INFO - Processed batch of 1 XP updates
+2025-03-14 21:28:29,924 - root - INFO - Shutdown signal received. Cleaning up...
+2025-03-14 21:28:29,924 - root - INFO - Cleanup complete. Exiting...

@@ -1,9 +1,9 @@
 import discord
 from discord.ext import commands
 from modules.levels import xp_to_next_level
-from modules.database import get_leaderboard, get_user_levels
+from modules.databasev2 import get_leaderboard, get_user_levels, get_user_rank
 from utils.image_generator import generate_level_card, generate_leaderboard_image
-import asyncpg  # Import asyncpg
+from utils.simple_image_handler import generate_image_nonblocking, update_with_image
 import logging
 
 class LevelingCommands(commands.Cog):
@@ -20,10 +20,10 @@ class LevelingCommands(commands.Cog):
         user_id = str(member.id)
 
         try:
-            row = await get_user_levels(self.bot, guild_id, user_id)
-            logging.info(row)
-
-            if row is None:
+            # Get user levels
+            xp, level_value = await get_user_levels(guild_id, user_id)
+            
+            if xp == 0 and level_value == 1:
                 embed = discord.Embed(
                     title="Level Info",
                     description=f"{member.display_name} hasn't earned any XP yet!",
@@ -32,40 +32,86 @@ class LevelingCommands(commands.Cog):
                 embed.set_thumbnail(url=member.avatar.url if member.avatar else member.default_avatar.url)
                 await ctx.send(embed=embed)
             else:
-                xp, level_value = row
-
                 next_level_xp = xp_to_next_level(level_value)
-                image = await generate_level_card(member, level_value, xp, next_level_xp)
-                file = discord.File(image, filename="level_card.png")
-                await ctx.send(file=file)
+                
+                # Create a loading message
+                message, _ = await generate_image_nonblocking(ctx, "level card")
+                
+                # Generate the image (this won't block the bot)
+                image_bytes = await generate_level_card(member, level_value, xp, next_level_xp)
+                
+                # Update the message with the image
+                await update_with_image(message, image_bytes, "level_card")
 
-        except asyncpg.PostgresError as e:
-            logging.info(f"PostgreSQL error in level command: {e}")
+        except Exception as e:
+            logging.error(f"Error in level command: {e}")
             await ctx.send("An error occurred while fetching level data.")
 
     @commands.command(name="leaderboard", aliases=["lb"])
-    async def leaderboard(self, ctx):
+    async def leaderboard(self, ctx, page: int = 1):
         """Display the top 10 users in this server based on their level and XP."""
         await ctx.message.delete()
 
         guild_id = str(ctx.guild.id)
+        limit = 10
+        offset = (page - 1) * limit
 
         try:
-            rows = await get_leaderboard(self.bot,guild_id)
+            rows = await get_leaderboard(guild_id, limit, offset)
 
             if not rows:
-                await ctx.send("No leaderboard data available yet!")
+                if page > 1:
+                    await ctx.send(f"No data available for page {page}. Try a lower page number.")
+                else:
+                    await ctx.send("No leaderboard data available yet!")
                 return
 
-            embed = discord.Embed(title=f"{ctx.guild.name}'s Leaderboard", color=discord.Color.blurple())
-            embed.description = "Here's the Avengers!"
-
-            leaderboard_image = await generate_leaderboard_image(ctx.guild, rows)
-            file = discord.File(leaderboard_image, filename="leaderboard.png")
-            embed.set_image(url="attachment://leaderboard.png")
-
-            await ctx.send(embed=embed, file=file)
-
-        except asyncpg.PostgresError as e:
-            print(f"PostgreSQL error in leaderboard command: {e}")
+            # Create a loading message
+            message, _ = await generate_image_nonblocking(ctx, "leaderboard")
+            
+            # Generate the leaderboard image (this won't block)
+            image_bytes = await generate_leaderboard_image(ctx.guild, rows, start_rank=(offset + 1))
+            
+            # Update the message with the image
+            await update_with_image(message, image_bytes, "leaderboard")
+                
+        except Exception as e:
+            logging.error(f"Error in leaderboard command: {e}")
             await ctx.send("An error occurred while fetching leaderboard data.")
+            
+    @commands.command(name="rank", aliases=["r"])
+    async def rank(self, ctx, member: discord.Member = None):
+        """Check your rank in the server leaderboard."""
+        member = member or ctx.author
+        guild_id = str(ctx.guild.id)
+        user_id = str(member.id)
+        
+        try:
+            # Get user's rank
+            rank = await get_user_rank(guild_id, user_id)
+            
+            if rank is None:
+                await ctx.send(f"{member.display_name} hasn't earned any XP yet!")
+                return
+                
+            # Get level info as well
+            xp, level = await get_user_levels(guild_id, user_id)
+            
+            if xp != 0 or level != 1:  # Check if they have earned XP
+                embed = discord.Embed(
+                    title="Rank Info",
+                    description=f"{member.display_name} is rank **#{rank}** on the server leaderboard!",
+                    color=discord.Color.blue()
+                )
+                embed.add_field(name="Level", value=str(level), inline=True)
+                embed.add_field(name="XP", value=str(xp), inline=True)
+                embed.add_field(name="Next Level", value=f"{xp}/{xp_to_next_level(level)} XP", inline=True)
+                embed.set_thumbnail(url=member.avatar.url if member.avatar else member.default_avatar.url)
+                
+                await ctx.send(embed=embed)
+            else:
+                await ctx.send(f"{member.display_name} is rank **#{rank}** on the server leaderboard!")
+                
+        except Exception as e:
+            logging.error(f"Error in rank command: {e}")
+            await ctx.send("An error occurred while fetching rank data.")
