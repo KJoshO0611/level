@@ -34,6 +34,11 @@ MAX_CONSECUTIVE_FAILURES = 3
 level_cache = {}  # {(guild_id, user_id): (xp, level, last_xp_time, last_role, timestamp)}
 config_cache = {}  # {guild_id: (level_up_channel, timestamp)}
 role_cache = {}    # {guild_id: ({level: role_id}, timestamp)}
+card_settings_cache = {}  # {(guild_id, user_id): (settings_dict, timestamp)}
+server_xp_settings_cache = {}  # {guild_id: (settings_dict, timestamp)}
+active_events_cache = {}   # {guild_id: (events_list, timestamp)}
+upcoming_events_cache = {} # {guild_id: (events_list, timestamp)}
+event_details_cache = {}   # {event_id: (event_dict, timestamp)}
 
 # Batch update queues
 xp_update_queue = []
@@ -154,11 +159,50 @@ async def _create_tables(bot):
                     PRIMARY KEY (id),          
                     UNIQUE(guild_id, level))
             ''')
+
+            # Table for server XP settings
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS server_xp_settings (
+                    guild_id TEXT PRIMARY KEY,
+                    min_xp INTEGER DEFAULT 10,
+                    max_xp INTEGER DEFAULT 20,
+                    cooldown INTEGER DEFAULT 60
+                )
+            ''')
+
+            # Table for custom level card settings
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS level_card_settings (
+                    guild_id TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    background_color TEXT DEFAULT '40,40,40',
+                    accent_color TEXT DEFAULT '0,200,200',
+                    text_color TEXT DEFAULT '255,255,255',
+                    background_image TEXT,
+                    PRIMARY KEY (guild_id, user_id)
+                )
+            ''')
             
+            # Table for XP boost events
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS xp_boost_events (
+                    id SERIAL PRIMARY KEY,
+                    guild_id TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    multiplier REAL NOT NULL,
+                    start_time DOUBLE PRECISION NOT NULL,
+                    end_time DOUBLE PRECISION NOT NULL,
+                    created_by TEXT NOT NULL,
+                    active BOOLEAN DEFAULT TRUE
+                )
+            ''')
+
+
             # Create indexes for frequently queried columns
             await conn.execute('''
                 CREATE INDEX IF NOT EXISTS idx_levels_guild_user ON levels(guild_id, user_id);
                 CREATE INDEX IF NOT EXISTS idx_levels_guild_level ON levels(guild_id, level);
+                CREATE INDEX IF NOT EXISTS idx_xp_events_guild_time ON xp_boost_events(guild_id, start_time, end_time)
             ''')
 
 # =====================
@@ -307,6 +351,21 @@ def invalidate_guild_cache(guild_id: str):
     for key in keys_to_remove:
         del level_cache[key]
     
+    # Remove matching users from card settings cache
+    keys_to_remove = [key for key in card_settings_cache.keys() if key[0] == guild_id]
+    for key in keys_to_remove:
+        del card_settings_cache[key]
+        
+    # Remove from server XP settings cache
+    if guild_id in server_xp_settings_cache:
+        del server_xp_settings_cache[guild_id]
+        
+    # Remove from XP boost event caches
+    if guild_id in active_events_cache:
+        del active_events_cache[guild_id]
+    if guild_id in upcoming_events_cache:
+        del upcoming_events_cache[guild_id]
+    
     logging.debug(f"Cache invalidated for guild {guild_id}")
 
 # =====================
@@ -401,6 +460,12 @@ async def safe_db_operation(func_name: str, *args, **kwargs):
                 "set_channel_boost_db": _set_channel_boost_db,
                 "remove_channel_boost_db": _remove_channel_boost_db,
                 "get_or_create_user_level": _get_or_create_user_level,
+                "update_level_card_setting": _update_level_card_setting,
+                "reset_level_card_settings": _reset_level_card_settings,
+                "update_server_xp_settings": _update_server_xp_settings,
+                "reset_server_xp_settings": _reset_server_xp_settings,
+                "create_xp_boost_event": _create_xp_boost_event,
+                "delete_xp_boost_event": _delete_xp_boost_event,
             }
             
             if func_name not in function_map:
@@ -480,6 +545,12 @@ async def retry_pending_operations():
                     "set_channel_boost_db": _set_channel_boost_db,
                     "remove_channel_boost_db": _remove_channel_boost_db,
                     "get_or_create_user_level": _get_or_create_user_level,
+                    "update_level_card_setting": _update_level_card_setting,
+                    "reset_level_card_settings": _reset_level_card_settings,
+                    "update_server_xp_settings": _update_server_xp_settings,
+                    "reset_server_xp_settings": _reset_server_xp_settings,
+                    "create_xp_boost_event": _create_xp_boost_event,
+                    "delete_xp_boost_event": _delete_xp_boost_event,
                 }
                 
                 if func_name in function_map:
@@ -597,6 +668,345 @@ async def _remove_channel_boost_db(guild_id: str, channel_id: str):
         query = "DELETE FROM channel_boosts WHERE guild_id = $1 AND channel_id = $2"
         await conn.execute(query, guild_id, channel_id)
 
+async def _get_level_card_settings(guild_id: str, user_id: str) -> dict:
+    """Internal function to get a user's level card settings"""
+    try:
+        async with get_connection() as conn:
+            query = """
+            SELECT background_color, accent_color, text_color, background_image 
+            FROM level_card_settings
+            WHERE guild_id = $1 AND user_id = $2
+            """
+            row = await conn.fetchrow(query, guild_id, user_id)
+            
+            # Return default settings if not found
+            if not row:
+                return {
+                    "background_color": "40,40,40",    # Dark gray
+                    "accent_color": "0,200,200",       # Teal
+                    "text_color": "255,255,255",       # White
+                    "background_image": None
+                }
+            
+            return {
+                "background_color": row["background_color"],
+                "accent_color": row["accent_color"],
+                "text_color": row["text_color"],
+                "background_image": row["background_image"]
+            }
+    except Exception as e:
+        logging.error(f"Error getting level card settings: {e}")
+        # Return default settings on error
+        return {
+            "background_color": "40,40,40",
+            "accent_color": "0,200,200",
+            "text_color": "255,255,255",
+            "background_image": None
+        }
+
+async def _update_level_card_setting(guild_id: str, user_id: str, setting: str, value: str) -> bool:
+    """Internal function to update a single setting for a user's level card"""
+    if setting not in ["background_color", "accent_color", "text_color", "background_image"]:
+        return False
+    
+    try:
+        async with get_connection() as conn:
+            # Check if the user already has settings
+            query = """
+            SELECT 1 FROM level_card_settings
+            WHERE guild_id = $1 AND user_id = $2
+            """
+            exists = await conn.fetchval(query, guild_id, user_id)
+            
+            if exists:
+                # Update existing settings
+                query = f"""
+                UPDATE level_card_settings
+                SET {setting} = $3
+                WHERE guild_id = $1 AND user_id = $2
+                """
+                await conn.execute(query, guild_id, user_id, value)
+            else:
+                # Insert new settings with defaults for other fields
+                defaults = {
+                    "background_color": "40,40,40",
+                    "accent_color": "0,200,200",
+                    "text_color": "255,255,255",
+                    "background_image": None
+                }
+                
+                # Override the specified setting
+                defaults[setting] = value
+                
+                query = """
+                INSERT INTO level_card_settings
+                (guild_id, user_id, background_color, accent_color, text_color, background_image)
+                VALUES ($1, $2, $3, $4, $5, $6)
+                """
+                await conn.execute(
+                    query,
+                    guild_id,
+                    user_id,
+                    defaults["background_color"],
+                    defaults["accent_color"],
+                    defaults["text_color"],
+                    defaults["background_image"]
+                )
+            
+            return True
+    except Exception as e:
+        logging.error(f"Error updating level card setting: {e}")
+        return False
+
+async def _reset_level_card_settings(guild_id: str, user_id: str) -> bool:
+    """Internal function to reset a user's level card settings to default"""
+    try:
+        async with get_connection() as conn:
+            query = """
+            DELETE FROM level_card_settings
+            WHERE guild_id = $1 AND user_id = $2
+            """
+            await conn.execute(query, guild_id, user_id)
+            return True
+    except Exception as e:
+        logging.error(f"Error resetting level card settings: {e}")
+        return False
+
+async def _get_server_xp_settings(guild_id: str) -> dict:
+    """Internal function to get XP settings for a server"""
+    try:
+        async with get_connection() as conn:
+            query = """
+            SELECT min_xp, max_xp, cooldown 
+            FROM server_xp_settings
+            WHERE guild_id = $1
+            """
+            row = await conn.fetchrow(query, guild_id)
+            
+            # Return defaults from config if not found
+            if not row:
+                from config import XP_SETTINGS
+                return {
+                    "min_xp": XP_SETTINGS["MIN"], 
+                    "max_xp": XP_SETTINGS["MAX"],
+                    "cooldown": XP_SETTINGS["COOLDOWN"]
+                }
+            
+            return {
+                "min_xp": row["min_xp"],
+                "max_xp": row["max_xp"],
+                "cooldown": row["cooldown"]
+            }
+    except Exception as e:
+        logging.error(f"Error getting server XP settings: {e}")
+        # Return defaults on error
+        from config import XP_SETTINGS
+        return {
+            "min_xp": XP_SETTINGS["MIN"], 
+            "max_xp": XP_SETTINGS["MAX"],
+            "cooldown": XP_SETTINGS["COOLDOWN"]
+        }
+
+async def _update_server_xp_settings(guild_id: str, settings: dict) -> bool:
+    """Internal function to update server XP settings"""
+    try:
+        async with get_connection() as conn:
+            # Check if settings exist
+            query = """
+            SELECT 1 FROM server_xp_settings
+            WHERE guild_id = $1
+            """
+            exists = await conn.fetchval(query, guild_id)
+            
+            if exists:
+                # Build update query based on provided settings
+                update_parts = []
+                params = [guild_id]
+                param_index = 2
+                
+                for key in ["min_xp", "max_xp", "cooldown"]:
+                    if key in settings:
+                        update_parts.append(f"{key} = ${param_index}")
+                        params.append(settings[key])
+                        param_index += 1
+                
+                if update_parts:
+                    query = f"""
+                    UPDATE server_xp_settings
+                    SET {', '.join(update_parts)}
+                    WHERE guild_id = $1
+                    """
+                    await conn.execute(query, *params)
+            else:
+                # Get current defaults to fill in any missing values
+                from config import XP_SETTINGS
+                defaults = {
+                    "min_xp": XP_SETTINGS["MIN"], 
+                    "max_xp": XP_SETTINGS["MAX"],
+                    "cooldown": XP_SETTINGS["COOLDOWN"]
+                }
+                
+                # Override with provided settings
+                for key in settings:
+                    if key in defaults:
+                        defaults[key] = settings[key]
+                
+                query = """
+                INSERT INTO server_xp_settings (guild_id, min_xp, max_xp, cooldown)
+                VALUES ($1, $2, $3, $4)
+                """
+                await conn.execute(
+                    query,
+                    guild_id,
+                    defaults["min_xp"],
+                    defaults["max_xp"],
+                    defaults["cooldown"]
+                )
+            
+            return True
+    except Exception as e:
+        logging.error(f"Error updating server XP settings: {e}")
+        return False
+
+async def _reset_server_xp_settings(guild_id: str) -> bool:
+    """Internal function to reset server XP settings to defaults"""
+    try:
+        async with get_connection() as conn:
+            query = """
+            DELETE FROM server_xp_settings
+            WHERE guild_id = $1
+            """
+            await conn.execute(query, guild_id)
+            return True
+    except Exception as e:
+        logging.error(f"Error resetting server XP settings: {e}")
+        return False
+
+async def _create_xp_boost_event(guild_id: str, name: str, multiplier: float, 
+                               start_time: float, end_time: float, created_by: str) -> int:
+    """Internal function to create a new XP boost event"""
+    try:
+        async with get_connection() as conn:
+            query = """
+            INSERT INTO xp_boost_events 
+            (guild_id, name, multiplier, start_time, end_time, created_by, active)
+            VALUES ($1, $2, $3, $4, $5, $6, TRUE)
+            RETURNING id
+            """
+            event_id = await conn.fetchval(query, guild_id, name, multiplier, 
+                                         start_time, end_time, created_by)
+            return event_id
+    except Exception as e:
+        logging.error(f"Error creating XP boost event: {e}")
+        return None
+
+async def _get_active_xp_boost_events(guild_id: str) -> list:
+    """Internal function to get active XP boost events for a guild"""
+    current_time = time.time()
+    
+    try:
+        async with get_connection() as conn:
+            query = """
+            SELECT id, name, multiplier, start_time, end_time, created_by
+            FROM xp_boost_events
+            WHERE guild_id = $1 
+              AND start_time <= $2 
+              AND end_time >= $2
+              AND active = TRUE
+            ORDER BY start_time ASC
+            """
+            rows = await conn.fetch(query, guild_id, current_time)
+            
+            return [
+                {
+                    "id": row["id"],
+                    "name": row["name"],
+                    "multiplier": row["multiplier"],
+                    "start_time": row["start_time"],
+                    "end_time": row["end_time"],
+                    "created_by": row["created_by"]
+                }
+                for row in rows
+            ]
+    except Exception as e:
+        logging.error(f"Error getting active XP boost events: {e}")
+        return []
+
+async def _get_upcoming_xp_boost_events(guild_id: str) -> list:
+    """Internal function to get upcoming XP boost events for a guild"""
+    current_time = time.time()
+    
+    try:
+        async with get_connection() as conn:
+            query = """
+            SELECT id, name, multiplier, start_time, end_time, created_by
+            FROM xp_boost_events
+            WHERE guild_id = $1 
+              AND start_time > $2
+              AND active = TRUE
+            ORDER BY start_time ASC
+            """
+            rows = await conn.fetch(query, guild_id, current_time)
+            
+            return [
+                {
+                    "id": row["id"],
+                    "name": row["name"],
+                    "multiplier": row["multiplier"],
+                    "start_time": row["start_time"],
+                    "end_time": row["end_time"],
+                    "created_by": row["created_by"]
+                }
+                for row in rows
+            ]
+    except Exception as e:
+        logging.error(f"Error getting upcoming XP boost events: {e}")
+        return []
+
+async def _delete_xp_boost_event(event_id: int) -> bool:
+    """Internal function to delete/deactivate an XP boost event"""
+    try:
+        async with get_connection() as conn:
+            query = """
+            UPDATE xp_boost_events
+            SET active = FALSE
+            WHERE id = $1
+            RETURNING id
+            """
+            result = await conn.fetchval(query, event_id)
+            return result is not None
+    except Exception as e:
+        logging.error(f"Error deleting XP boost event: {e}")
+        return False
+
+async def _get_xp_boost_event(event_id: int) -> dict:
+    """Internal function to get details of a specific XP boost event"""
+    try:
+        async with get_connection() as conn:
+            query = """
+            SELECT id, guild_id, name, multiplier, start_time, end_time, created_by, active
+            FROM xp_boost_events
+            WHERE id = $1
+            """
+            row = await conn.fetchrow(query, event_id)
+            
+            if not row:
+                return None
+                
+            return {
+                "id": row["id"],
+                "guild_id": row["guild_id"],
+                "name": row["name"],
+                "multiplier": row["multiplier"],
+                "start_time": row["start_time"],
+                "end_time": row["end_time"],
+                "created_by": row["created_by"],
+                "active": row["active"]
+            }
+    except Exception as e:
+        logging.error(f"Error getting XP boost event: {e}")
+        return None  
+    
 # =====================
 # Public API functions
 # =====================
@@ -902,6 +1312,236 @@ async def delete_level_role(guild_id: str, level: int):
         logging.error(f"Database error in delete_level_role: {e}")
         return False
 
+async def get_level_card_settings(guild_id: str, user_id: str) -> dict:
+    """Get a user's level card settings with caching"""
+    # Try cache first
+    cache_key = (guild_id, user_id)
+    cached_value = _get_from_cache(card_settings_cache, cache_key)
+    if cached_value is not None:
+        return cached_value
+    
+    # If not in cache, get from database with safe operation
+    settings = await _get_level_card_settings(guild_id, user_id)
+    
+    # Cache the settings if valid
+    if settings:
+        _set_in_cache(card_settings_cache, cache_key, settings)
+    
+    return settings
+
+async def update_level_card_setting(guild_id: str, user_id: str, setting: str, value: str) -> bool:
+    """Update a single setting for a user's level card"""
+    if setting not in ["background_color", "accent_color", "text_color", "background_image"]:
+        return False
+    
+    # Use safe_db_operation to handle errors and retries
+    result = await safe_db_operation("update_level_card_setting", guild_id, user_id, setting, value)
+    
+    if result:
+        # Update cache
+        cache_key = (guild_id, user_id)
+        current_settings = await get_level_card_settings(guild_id, user_id)
+        current_settings[setting] = value
+        _set_in_cache(card_settings_cache, cache_key, current_settings)
+    
+    return result is not False
+
+async def reset_level_card_settings(guild_id: str, user_id: str) -> bool:
+    """Reset a user's level card settings to default"""
+    # Use safe_db_operation to handle errors and retries
+    result = await safe_db_operation("reset_level_card_settings", guild_id, user_id)
+    
+    if result:
+        # Remove from cache
+        cache_key = (guild_id, user_id)
+        if cache_key in card_settings_cache:
+            del card_settings_cache[cache_key]
+    
+    return result is not False
+
+async def get_server_xp_settings(guild_id: str) -> dict:
+    """Get XP settings for a server with caching"""
+    # Try cache first
+    cached_value = _get_from_cache(server_xp_settings_cache, guild_id)
+    if cached_value is not None:
+        return cached_value
+    
+    # If not in cache, get from database
+    settings = await _get_server_xp_settings(guild_id)
+    
+    # Cache the settings if valid
+    if settings:
+        _set_in_cache(server_xp_settings_cache, guild_id, settings)
+    
+    return settings
+
+async def update_server_xp_settings(guild_id: str, settings: dict) -> bool:
+    """Update server XP settings with error handling and cache management"""
+    # Validate settings
+    for key in settings:
+        if key not in ["min_xp", "max_xp", "cooldown"]:
+            logging.warning(f"Invalid setting key: {key}")
+            return False
+            
+    # Use safe_db_operation for error handling and retries
+    result = await safe_db_operation("update_server_xp_settings", guild_id, settings)
+    
+    if result:
+        # Update cache if operation was successful
+        # First get current cached settings or fetch from db if not cached
+        cached_settings = _get_from_cache(server_xp_settings_cache, guild_id)
+        if cached_settings:
+            # Update only the changed settings
+            for key, value in settings.items():
+                cached_settings[key] = value
+            _set_in_cache(server_xp_settings_cache, guild_id, cached_settings)
+        else:
+            # Invalidate cache to force a fresh fetch next time
+            if guild_id in server_xp_settings_cache:
+                del server_xp_settings_cache[guild_id]
+    
+    return result is not False
+
+async def reset_server_xp_settings(guild_id: str) -> bool:
+    """Reset server XP settings to defaults with error handling"""
+    # Use safe_db_operation for error handling and retries
+    result = await safe_db_operation("reset_server_xp_settings", guild_id)
+    
+    if result:
+        # Remove from cache if operation was successful
+        if guild_id in server_xp_settings_cache:
+            del server_xp_settings_cache[guild_id]
+    
+    return result is not False
+
+async def create_xp_boost_event(guild_id: str, name: str, multiplier: float, 
+                               start_time: float, end_time: float, created_by: str) -> int:
+    """Create a new XP boost event and return its ID"""
+    # Use safe_db_operation for error handling
+    event_id = await safe_db_operation("create_xp_boost_event", guild_id, name, multiplier, 
+                                     start_time, end_time, created_by)
+    
+    if event_id:
+        # Invalidate caches for this guild to force a refresh
+        if guild_id in active_events_cache:
+            del active_events_cache[guild_id]
+        if guild_id in upcoming_events_cache:
+            del upcoming_events_cache[guild_id]
+    
+    return event_id
+
+async def get_active_xp_boost_events(guild_id: str) -> list:
+    """Get all active XP boost events for a guild with caching"""
+    # Try cache first
+    cached_value = _get_from_cache(active_events_cache, guild_id)
+    if cached_value is not None:
+        # Filter out any events that have ended since caching
+        current_time = time.time()
+        valid_events = [event for event in cached_value 
+                      if event["end_time"] >= current_time]
+        
+        # If the list changed (events ended), update the cache
+        if len(valid_events) != len(cached_value):
+            _set_in_cache(active_events_cache, guild_id, valid_events)
+            
+        return valid_events
+    
+    # If not in cache or cache expired, get from database
+    events = await _get_active_xp_boost_events(guild_id)
+    
+    # Cache the results
+    if events is not None:
+        _set_in_cache(active_events_cache, guild_id, events)
+    
+    return events
+
+async def get_upcoming_xp_boost_events(guild_id: str) -> list:
+    """Get upcoming XP boost events for a guild with caching"""
+    # Try cache first
+    cached_value = _get_from_cache(upcoming_events_cache, guild_id)
+    if cached_value is not None:
+        # Filter out any events that have started since caching
+        current_time = time.time()
+        valid_events = [event for event in cached_value 
+                      if event["start_time"] > current_time]
+        
+        # If the list changed (events started), update the cache
+        if len(valid_events) != len(cached_value):
+            _set_in_cache(upcoming_events_cache, guild_id, valid_events)
+            
+        return valid_events
+    
+    # If not in cache or cache expired, get from database
+    events = await _get_upcoming_xp_boost_events(guild_id)
+    
+    # Cache the results
+    if events is not None:
+        _set_in_cache(upcoming_events_cache, guild_id, events)
+    
+    return events
+
+async def delete_xp_boost_event(event_id: int) -> bool:
+    """Delete (deactivate) an XP boost event with error handling"""
+    # Get the event first to find its guild_id for cache invalidation
+    event = await get_xp_boost_event(event_id)
+    guild_id = event["guild_id"] if event else None
+    
+    # Use safe_db_operation for error handling
+    result = await safe_db_operation("delete_xp_boost_event", event_id)
+    
+    if result and guild_id:
+        # Invalidate caches
+        if guild_id in active_events_cache:
+            del active_events_cache[guild_id]
+        if guild_id in upcoming_events_cache:
+            del upcoming_events_cache[guild_id]
+        if event_id in event_details_cache:
+            del event_details_cache[event_id]
+    
+    return result is not False
+
+async def get_xp_boost_event(event_id: int) -> dict:
+    """Get details of a specific XP boost event with caching"""
+    # Try cache first
+    cached_value = _get_from_cache(event_details_cache, event_id)
+    if cached_value is not None:
+        return cached_value
+    
+    # If not in cache or cache expired, get from database
+    event = await _get_xp_boost_event(event_id)
+    
+    # Cache the results if found
+    if event:
+        _set_in_cache(event_details_cache, event_id, event)
+    
+    return event
+
+async def get_event_xp_multiplier(guild_id: str) -> float:
+    """
+    Get the XP multiplier from all active events for a guild.
+    If multiple events are active, we take the highest multiplier.
+    """
+    active_events = await get_active_xp_boost_events(guild_id)
+    
+    # Default multiplier is 1.0 (no change)
+    if not active_events:
+        return 1.0
+    
+    # Get the highest multiplier from active events
+    max_multiplier = max(event["multiplier"] for event in active_events)
+    return max_multiplier
+
+def validate_rgb_color(color_str: str) -> bool:
+    """Validate that a string is in RGB format (e.g., '255,0,0')"""
+    try:
+        parts = color_str.split(',')
+        if len(parts) != 3:
+            return False
+            
+        r, g, b = map(int, parts)
+        return (0 <= r <= 255) and (0 <= g <= 255) and (0 <= b <= 255)
+    except ValueError:
+        return False
 # =====================
 # Connection Recovery and Migration
 # =====================

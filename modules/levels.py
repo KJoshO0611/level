@@ -1,7 +1,16 @@
 import discord
 import random
 import time
-from modules.databasev2 import get_or_create_user_level, update_user_xp, get_level_up_channel, apply_channel_boost, get_level_roles, get_or_create_user_level
+from modules.databasev2 import (
+    get_or_create_user_level, 
+    update_user_xp, 
+    get_level_up_channel, 
+    apply_channel_boost, 
+    get_level_roles, 
+    get_or_create_user_level,
+    get_active_xp_boost_events
+)
+
 from config import load_config
 import logging
 
@@ -12,6 +21,21 @@ def xp_to_next_level(level: int) -> int:
     """Calculate XP required for next level using enhanced leveling algorithm"""
     # Formula: next level at 100 * (level ^ 1.5) XP
     return int(100 * (level ** 1.8))
+
+async def get_event_xp_multiplier(guild_id: str) -> float:
+    """
+    Get the XP multiplier from all active events for a guild.
+    If multiple events are active, we take the highest multiplier.
+    """
+    active_events = await get_active_xp_boost_events(guild_id)
+    
+    # Default multiplier is 1.0 (no change)
+    if not active_events:
+        return 1.0
+    
+    # Get the highest multiplier from active events
+    max_multiplier = max(event["multiplier"] for event in active_events)
+    return max_multiplier
 
 async def award_xp_and_handle_level_up(guild_id, user_id, xp_amount, member, update_last_xp_time=False):
     """
@@ -26,6 +50,13 @@ async def award_xp_and_handle_level_up(guild_id, user_id, xp_amount, member, upd
     
     # Track if this is a new user (for level 1 role assignment)
     is_new_user = (xp == 0 and level == 1)
+
+    # Apply event boost multiplier if any events are active
+    event_multiplier = await get_event_xp_multiplier(guild_id)
+    if event_multiplier > 1.0:
+        # Apply the boost and round to integer
+        xp_amount = int(xp_amount * event_multiplier)
+        logging.info(f"Applied event boost multiplier of {event_multiplier}x, adjusted XP: {xp_amount}")
 
     # Add XP
     xp += xp_amount
@@ -163,7 +194,23 @@ async def handle_message_xp(message):
         base_xp = random.randint(XP_SETTINGS["MIN"], XP_SETTINGS["MAX"])
         
         # Apply channel boost if applicable
-        awarded_xp = apply_channel_boost(base_xp, channel_id)
+        boosted_xp = apply_channel_boost(base_xp, channel_id)
+        
+        # Check for event boost
+        event_multiplier = await get_event_xp_multiplier(guild_id)
+        
+        # Calculate final XP
+        awarded_xp = boosted_xp
+        if event_multiplier > 1.0:
+            awarded_xp = int(boosted_xp * event_multiplier)
+            
+            # Show event boost notification occasionally (1 in 20 chance)
+            if random.random() < 0.05:  
+                event_boost_msg = f"🎉 **XP Boost Event Active!** {message.author.mention} earned {awarded_xp}XP ({event_multiplier}x bonus)"
+                try:
+                    await message.channel.send(event_boost_msg, delete_after=10)
+                except:
+                    pass  # Silently fail if message can't be sent
         
         # Award the boosted XP and update the last_xp_time
         logging.info(f"Awarded {awarded_xp}xp to {message.author.name}")
