@@ -8,6 +8,7 @@ from modules.voice_activity import start_voice_tracking, handle_voice_state_upda
 from cogs.leveling import LevelingCommands
 from cogs.admin import AdminCommands
 from cogs.help import CustomHelpCommand
+from cogs.config_commands import ConfigCommands
 
 # Configure logging
 logging.basicConfig(
@@ -48,6 +49,7 @@ def setup_bot():
         await bot.add_cog(LevelingCommands(bot))
         await bot.add_cog(AdminCommands(bot))
         await bot.add_cog(CustomHelpCommand(bot))
+        await bot.add_cog(ConfigCommands(bot))  # Add this line
         await bot.tree.sync()
 
     # Make this method accessible
