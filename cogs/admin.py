@@ -332,7 +332,7 @@ class AdminCommands(commands.Cog):
         
         await ctx.send(embed=embed)
         
-    @commands.command(name="clearcache", aliases=["cc"])
+    @commands.command(name="clearcache", aliases=["clc"])
     @commands.has_permissions(administrator=True)
     async def clear_cache(self, ctx, guild_id: str = None):
         """Clear the bot's cache for this guild or a specific guild"""
