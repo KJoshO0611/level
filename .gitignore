@@ -11,3 +11,4 @@ database/
 
 modules/db.old.py
 .venv
+bot.log
