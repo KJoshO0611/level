@@ -1,9 +1,10 @@
 import discord
-import aiohttp
 import io
-from PIL import Image, ImageDraw, ImageFont, UnidentifiedImageError, ImageFilter
+from PIL import Image, ImageDraw, ImageFont, ImageFilter
+import aiohttp
 from config import load_config
 from utils.simple_image_handler import run_in_executor
+from modules.databasev2 import get_level_card_settings
 
 config = load_config()
 FONT_PATH = config["PATHS"]["FONT_PATH"]
@@ -32,9 +33,24 @@ def rounded_rectangle(draw, bounds, radius, fill):
     if y2 - y1 > radius * 2:
         draw.rectangle((x1, y1 + radius, x2, y2 - radius), fill=fill)
 
+# Parse RGB color string to tuple
+def parse_rgb(color_str):
+    """Convert RGB string 'r,g,b' to a tuple (r, g, b)"""
+    try:
+        r, g, b = map(int, color_str.split(','))
+        return (r, g, b)
+    except (ValueError, AttributeError):
+        # Return default color on error
+        return (40, 40, 40)
+
 # Synchronous function to generate a level card
-def _generate_level_card_sync(avatar_bytes, username, level, xp, xp_needed):
-    """Generate a level card image (synchronous version)"""
+def _generate_level_card_sync(avatar_bytes, username, level, xp, xp_needed, card_settings):
+    """Generate a level card image (synchronous version) with custom colors from settings"""
+    # Parse color settings
+    background_color = parse_rgb(card_settings.get("background_color", "40,40,40"))
+    accent_color = parse_rgb(card_settings.get("accent_color", "0,200,200"))
+    text_color = parse_rgb(card_settings.get("text_color", "255,255,255"))
+    
     # Define badge path based on level
     if 0 <= level <= 9:
         BADGE_IMAGE_PATH = "assets/badge/0.PNG"
@@ -51,10 +67,8 @@ def _generate_level_card_sync(avatar_bytes, username, level, xp, xp_needed):
         
     # Define card size
     width, height = 700, 150
-    background_color = (40, 40, 40)
-    accent_color = (0, 200, 200)
 
-    # Create an image with a dark background
+    # Create an image with the custom background color
     img = Image.new("RGB", (width, height), background_color)
     draw = ImageDraw.Draw(img)
 
@@ -95,14 +109,14 @@ def _generate_level_card_sync(avatar_bytes, username, level, xp, xp_needed):
         font_large = ImageFont.load_default()
         font_small = ImageFont.load_default()
 
-    # Draw user info
-    draw.text((120, 30), username, font=font_large, fill="white")
+    # Draw user info with custom text color
+    draw.text((120, 30), username, font=font_large, fill=text_color)
 
     # Draw level and XP
     level_text = f"Level: {level}"
     xp_text = f"XP: {xp} / {xp_needed}"
-    draw.text((120, 65), level_text, font=font_small, fill="white")
-    draw.text((250, 65), xp_text, font=font_small, fill="white")
+    draw.text((120, 65), level_text, font=font_small, fill=text_color)
+    draw.text((250, 65), xp_text, font=font_small, fill=text_color)
 
     # Draw XP bar background
     bar_x, bar_y = 120, 100
@@ -110,7 +124,7 @@ def _generate_level_card_sync(avatar_bytes, username, level, xp, xp_needed):
     radius = bar_height // 2
     rounded_rectangle(draw, (bar_x, bar_y, bar_x + bar_width, bar_y + bar_height), radius, (60, 60, 60))
 
-    # Draw XP progress
+    # Draw XP progress with custom accent color
     progress = xp / xp_needed
     progress_width = max(1, int(bar_width * progress))
     if progress > 0:
@@ -132,7 +146,12 @@ def _generate_level_card_sync(avatar_bytes, username, level, xp, xp_needed):
 
 # Async wrapper for the level card generator
 async def generate_level_card(member, level, xp, xp_needed):
-    """Download avatar and generate level card"""
+    """Download avatar, get color settings, and generate level card"""
+    # Get user's card settings from database
+    guild_id = str(member.guild.id)
+    user_id = str(member.id)
+    card_settings = await get_level_card_settings(guild_id, user_id)
+    
     # Download avatar
     avatar_url = member.avatar.url if member.avatar else member.default_avatar.url
     async with aiohttp.ClientSession() as session:
@@ -146,7 +165,8 @@ async def generate_level_card(member, level, xp, xp_needed):
                     member.name, 
                     level, 
                     xp, 
-                    xp_needed
+                    xp_needed,
+                    card_settings  # Pass the user's card settings
                 )
     return None
 
