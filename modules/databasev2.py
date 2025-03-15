@@ -170,15 +170,12 @@ async def _create_tables(bot):
                 )
             ''')
 
-            # Table for custom level card settings
+            # Table for custom backgrounds (replacing level_card_settings)
             await conn.execute('''
-                CREATE TABLE IF NOT EXISTS level_card_settings (
+                CREATE TABLE IF NOT EXISTS custom_backgrounds (
                     guild_id TEXT NOT NULL,
                     user_id TEXT NOT NULL,
-                    background_color TEXT DEFAULT '40,40,40',
-                    accent_color TEXT DEFAULT '0,200,200',
-                    text_color TEXT DEFAULT '255,255,255',
-                    background_image TEXT,
+                    background_path TEXT NOT NULL,
                     PRIMARY KEY (guild_id, user_id)
                 )
             ''')
@@ -202,7 +199,8 @@ async def _create_tables(bot):
             await conn.execute('''
                 CREATE INDEX IF NOT EXISTS idx_levels_guild_user ON levels(guild_id, user_id);
                 CREATE INDEX IF NOT EXISTS idx_levels_guild_level ON levels(guild_id, level);
-                CREATE INDEX IF NOT EXISTS idx_xp_events_guild_time ON xp_boost_events(guild_id, start_time, end_time)
+                CREATE INDEX IF NOT EXISTS idx_xp_events_guild_time ON xp_boost_events(guild_id, start_time, end_time);
+                CREATE INDEX IF NOT EXISTS idx_custom_backgrounds ON custom_backgrounds(guild_id, user_id);
             ''')
 
 # =====================
@@ -460,12 +458,12 @@ async def safe_db_operation(func_name: str, *args, **kwargs):
                 "set_channel_boost_db": _set_channel_boost_db,
                 "remove_channel_boost_db": _remove_channel_boost_db,
                 "get_or_create_user_level": _get_or_create_user_level,
-                "update_level_card_setting": _update_level_card_setting,
-                "reset_level_card_settings": _reset_level_card_settings,
                 "update_server_xp_settings": _update_server_xp_settings,
                 "reset_server_xp_settings": _reset_server_xp_settings,
                 "create_xp_boost_event": _create_xp_boost_event,
                 "delete_xp_boost_event": _delete_xp_boost_event,
+                "_set_user_background": _set_user_background,
+                "_remove_user_background": _remove_user_background,
             }
             
             if func_name not in function_map:
@@ -545,8 +543,6 @@ async def retry_pending_operations():
                     "set_channel_boost_db": _set_channel_boost_db,
                     "remove_channel_boost_db": _remove_channel_boost_db,
                     "get_or_create_user_level": _get_or_create_user_level,
-                    "update_level_card_setting": _update_level_card_setting,
-                    "reset_level_card_settings": _reset_level_card_settings,
                     "update_server_xp_settings": _update_server_xp_settings,
                     "reset_server_xp_settings": _reset_server_xp_settings,
                     "create_xp_boost_event": _create_xp_boost_event,
@@ -668,108 +664,48 @@ async def _remove_channel_boost_db(guild_id: str, channel_id: str):
         query = "DELETE FROM channel_boosts WHERE guild_id = $1 AND channel_id = $2"
         await conn.execute(query, guild_id, channel_id)
 
-async def _get_level_card_settings(guild_id: str, user_id: str) -> dict:
-    """Internal function to get a user's level card settings"""
+async def _set_user_background(guild_id: str, user_id: str, relative_path: str) -> bool:
+    """Internal function to set a custom background for a user"""
     try:
         async with get_connection() as conn:
             query = """
-            SELECT background_color, accent_color, text_color, background_image 
-            FROM level_card_settings
-            WHERE guild_id = $1 AND user_id = $2
+            INSERT INTO custom_backgrounds (guild_id, user_id, background_path)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (guild_id, user_id) 
+            DO UPDATE SET background_path = $3
             """
-            row = await conn.fetchrow(query, guild_id, user_id)
-            
-            # Return default settings if not found
-            if not row:
-                return {
-                    "background_color": "40,40,40",    # Dark gray
-                    "accent_color": "0,200,200",       # Teal
-                    "text_color": "255,255,255",       # White
-                    "background_image": None
-                }
-            
-            return {
-                "background_color": row["background_color"],
-                "accent_color": row["accent_color"],
-                "text_color": row["text_color"],
-                "background_image": row["background_image"]
-            }
-    except Exception as e:
-        logging.error(f"Error getting level card settings: {e}")
-        # Return default settings on error
-        return {
-            "background_color": "40,40,40",
-            "accent_color": "0,200,200",
-            "text_color": "255,255,255",
-            "background_image": None
-        }
-
-async def _update_level_card_setting(guild_id: str, user_id: str, setting: str, value: str) -> bool:
-    """Internal function to update a single setting for a user's level card"""
-    if setting not in ["background_color", "accent_color", "text_color", "background_image"]:
-        return False
-    
-    try:
-        async with get_connection() as conn:
-            # Check if the user already has settings
-            query = """
-            SELECT 1 FROM level_card_settings
-            WHERE guild_id = $1 AND user_id = $2
-            """
-            exists = await conn.fetchval(query, guild_id, user_id)
-            
-            if exists:
-                # Update existing settings
-                query = f"""
-                UPDATE level_card_settings
-                SET {setting} = $3
-                WHERE guild_id = $1 AND user_id = $2
-                """
-                await conn.execute(query, guild_id, user_id, value)
-            else:
-                # Insert new settings with defaults for other fields
-                defaults = {
-                    "background_color": "40,40,40",
-                    "accent_color": "0,200,200",
-                    "text_color": "255,255,255",
-                    "background_image": None
-                }
-                
-                # Override the specified setting
-                defaults[setting] = value
-                
-                query = """
-                INSERT INTO level_card_settings
-                (guild_id, user_id, background_color, accent_color, text_color, background_image)
-                VALUES ($1, $2, $3, $4, $5, $6)
-                """
-                await conn.execute(
-                    query,
-                    guild_id,
-                    user_id,
-                    defaults["background_color"],
-                    defaults["accent_color"],
-                    defaults["text_color"],
-                    defaults["background_image"]
-                )
-            
+            await conn.execute(query, guild_id, user_id, relative_path)
             return True
     except Exception as e:
-        logging.error(f"Error updating level card setting: {e}")
+        logging.error(f"Error setting user background: {e}")
         return False
 
-async def _reset_level_card_settings(guild_id: str, user_id: str) -> bool:
-    """Internal function to reset a user's level card settings to default"""
+async def _get_user_background(guild_id: str, user_id: str) -> str:
+    """Internal function to get the custom background path for a user"""
     try:
         async with get_connection() as conn:
             query = """
-            DELETE FROM level_card_settings
+            SELECT background_path FROM custom_backgrounds
+            WHERE guild_id = $1 AND user_id = $2
+            """
+            result = await conn.fetchval(query, guild_id, user_id)
+            return result
+    except Exception as e:
+        logging.error(f"Error getting user background: {e}")
+        return None
+
+async def _remove_user_background(guild_id: str, user_id: str) -> bool:
+    """Internal function to remove a user's custom background"""
+    try:
+        async with get_connection() as conn:
+            query = """
+            DELETE FROM custom_backgrounds
             WHERE guild_id = $1 AND user_id = $2
             """
             await conn.execute(query, guild_id, user_id)
             return True
     except Exception as e:
-        logging.error(f"Error resetting level card settings: {e}")
+        logging.error(f"Error removing user background: {e}")
         return False
 
 async def _get_server_xp_settings(guild_id: str) -> dict:
@@ -1312,52 +1248,93 @@ async def delete_level_role(guild_id: str, level: int):
         logging.error(f"Database error in delete_level_role: {e}")
         return False
 
-async def get_level_card_settings(guild_id: str, user_id: str) -> dict:
-    """Get a user's level card settings with caching"""
-    # Try cache first
-    cache_key = (guild_id, user_id)
-    cached_value = _get_from_cache(card_settings_cache, cache_key)
-    if cached_value is not None:
-        return cached_value
+async def set_user_background(guild_id: str, user_id: str, relative_path: str) -> bool:
+    """
+    Set a custom background for a user
     
-    # If not in cache, get from database with safe operation
-    settings = await _get_level_card_settings(guild_id, user_id)
+    Parameters:
+    - guild_id: The guild ID
+    - user_id: The user ID
+    - relative_path: The path to the background image, relative to EXTERNAL_VOLUME_PATH
     
-    # Cache the settings if valid
-    if settings:
-        _set_in_cache(card_settings_cache, cache_key, settings)
-    
-    return settings
+    Returns:
+    - bool: True if successful, False otherwise
+    """
+    return await safe_db_operation("_set_user_background", guild_id, user_id, relative_path)
 
-async def update_level_card_setting(guild_id: str, user_id: str, setting: str, value: str) -> bool:
-    """Update a single setting for a user's level card"""
-    if setting not in ["background_color", "accent_color", "text_color", "background_image"]:
-        return False
+async def get_user_background(guild_id: str, user_id: str) -> str:
+    """
+    Get the custom background path for a user
     
-    # Use safe_db_operation to handle errors and retries
-    result = await safe_db_operation("update_level_card_setting", guild_id, user_id, setting, value)
+    Parameters:
+    - guild_id: The guild ID
+    - user_id: The user ID
     
-    if result:
-        # Update cache
-        cache_key = (guild_id, user_id)
-        current_settings = await get_level_card_settings(guild_id, user_id)
-        current_settings[setting] = value
-        _set_in_cache(card_settings_cache, cache_key, current_settings)
-    
-    return result is not False
+    Returns:
+    - str: The relative path to the background image, or None if not set
+    """
+    # Check cache first (if you want to implement caching)
+    # For now, we'll just call the internal function
+    try:
+        return await _get_user_background(guild_id, user_id)
+    except Exception as e:
+        logging.error(f"Error in get_user_background: {e}")
+        return None
 
-async def reset_level_card_settings(guild_id: str, user_id: str) -> bool:
-    """Reset a user's level card settings to default"""
-    # Use safe_db_operation to handle errors and retries
-    result = await safe_db_operation("reset_level_card_settings", guild_id, user_id)
+async def remove_user_background(guild_id: str, user_id: str) -> bool:
+    """
+    Remove a user's custom background
     
-    if result:
-        # Remove from cache
-        cache_key = (guild_id, user_id)
-        if cache_key in card_settings_cache:
-            del card_settings_cache[cache_key]
+    Parameters:
+    - guild_id: The guild ID
+    - user_id: The user ID
     
-    return result is not False
+    Returns:
+    - bool: True if successful, False otherwise
+    """
+    return await safe_db_operation("_remove_user_background", guild_id, user_id)
+
+async def get_all_user_backgrounds() -> list:
+    """
+    Get all custom backgrounds from the database
+    
+    Returns:
+    - list: A list of tuples containing (guild_id, user_id, background_path)
+    """
+    try:
+        async with get_connection() as conn:
+            query = """
+            SELECT guild_id, user_id, background_path 
+            FROM custom_backgrounds
+            """
+            rows = await conn.fetch(query)
+            return [(row['guild_id'], row['user_id'], row['background_path']) for row in rows]
+    except Exception as e:
+        logging.error(f"Error getting all backgrounds: {e}")
+        return []
+
+async def get_guild_backgrounds(guild_id: str) -> list:
+    """
+    Get all backgrounds for a specific guild
+    
+    Parameters:
+    - guild_id: The guild ID
+    
+    Returns:
+    - list: A list of tuples containing (user_id, background_path)
+    """
+    try:
+        async with get_connection() as conn:
+            query = """
+            SELECT user_id, background_path 
+            FROM custom_backgrounds
+            WHERE guild_id = $1
+            """
+            rows = await conn.fetch(query, guild_id)
+            return [(row['user_id'], row['background_path']) for row in rows]
+    except Exception as e:
+        logging.error(f"Error getting guild backgrounds: {e}")
+        return []
 
 async def get_server_xp_settings(guild_id: str) -> dict:
     """Get XP settings for a server with caching"""
@@ -1531,17 +1508,6 @@ async def get_event_xp_multiplier(guild_id: str) -> float:
     max_multiplier = max(event["multiplier"] for event in active_events)
     return max_multiplier
 
-def validate_rgb_color(color_str: str) -> bool:
-    """Validate that a string is in RGB format (e.g., '255,0,0')"""
-    try:
-        parts = color_str.split(',')
-        if len(parts) != 3:
-            return False
-            
-        r, g, b = map(int, parts)
-        return (0 <= r <= 255) and (0 <= g <= 255) and (0 <= b <= 255)
-    except ValueError:
-        return False
 # =====================
 # Connection Recovery and Migration
 # =====================

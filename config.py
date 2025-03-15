@@ -3,6 +3,8 @@ import os
 
 #load_dotenv()
 
+EXTERNAL_VOLUME_PATH = "/external_volume" 
+
 # XP settings
 XP_SETTINGS = {
     "COOLDOWN": 60,  # seconds between XP awards per user
@@ -43,7 +45,8 @@ def load_config():
         "GUILD_ID": os.getenv("GUILDID"),
         "XP_SETTINGS": XP_SETTINGS,
         "PATHS": PATHS,
-        "DATABASE": DATABASE
+        "DATABASE": DATABASE,
+        "EXTERNAL_VOLUME_PATH" : EXTERNAL_VOLUME_PATH
     }
     
     return config

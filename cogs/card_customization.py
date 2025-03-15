@@ -1,295 +1,154 @@
-# Create a new file: cogs/card_customization.py
-
 import discord
 from discord.ext import commands
-from discord import app_commands
+import os
+import aiohttp
 import logging
-import re
-from modules.databasev2 import (
-    get_level_card_settings,
-    update_level_card_setting,
-    reset_level_card_settings,
-    validate_rgb_color
-)
+from modules.databasev2 import set_user_background, get_user_background, remove_user_background
+from config import load_config
 
-class CardCustomizationCommands(commands.Cog):
+# Load the external volume path from config
+config = load_config()
+# This should be added to your config.py or config.json file
+EXTERNAL_VOLUME_PATH = config.get("EXTERNAL_VOLUME_PATH", "/external_volume")
+BACKGROUNDS_DIR = os.path.join(EXTERNAL_VOLUME_PATH, "backgrounds")
+
+class BackgroundCommands(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        # Ensure backgrounds directory exists
+        os.makedirs(BACKGROUNDS_DIR, exist_ok=True)
+        logging.info(f"Using background directory: {BACKGROUNDS_DIR}")
+
+    @commands.command(name="setbackground", aliases=["setbg"])
+    async def set_background(self, ctx, *, url: str = None):
+        """Set a custom background for your level card. Upload an image or provide a URL."""
+        await ctx.message.delete()
         
-    # Setup slash commands when the cog is loaded
-    async def cog_load(self):
+        # Check if an image was attached
+        if not url and ctx.message.attachments:
+            url = ctx.message.attachments[0].url
+        
+        if not url:
+            await ctx.send("Please provide a URL or attach an image for your custom background!", delete_after=10)
+            return
+        
+        # Download and save the image
         try:
-            await self.bot.tree.sync()
-            logging.info("Card customization slash commands registered")
-        except Exception as e:
-            logging.error(f"Error syncing card customization commands: {e}")
+            # Create a unique filename based on user ID
+            guild_id = str(ctx.guild.id)
+            user_id = str(ctx.author.id)
+            file_ext = url.split('.')[-1].lower()
             
-    @commands.command(name="cardcolors", aliases=["cc"])
-    async def card_colors(self, ctx):
-        """View your current level card color settings"""
-        guild_id = str(ctx.guild.id)
-        user_id = str(ctx.author.id)
-        
-        settings = await get_level_card_settings(guild_id, user_id)
-        
-        embed = discord.Embed(
-            title="Your Level Card Settings",
-            description="Here are your current level card color settings",
-            color=discord.Color.blue()
-        )
-        
-        # Parse the colors to use in the embed
-        try:
-            bg_r, bg_g, bg_b = map(int, settings["background_color"].split(','))
-            accent_r, accent_g, accent_b = map(int, settings["accent_color"].split(','))
-            text_r, text_g, text_b = map(int, settings["text_color"].split(','))
+            # Validate extension
+            if file_ext not in ['png', 'jpg', 'jpeg', 'gif']:
+                file_ext = 'png'  # Default to png if unrecognized
+                
+            # Create directory structure if it doesn't exist
+            guild_dir = os.path.join(BACKGROUNDS_DIR, guild_id)
+            os.makedirs(guild_dir, exist_ok=True)
             
-            embed.color = discord.Color.from_rgb(accent_r, accent_g, accent_b)
+            # Create a meaningful filename
+            filename = f"{user_id}.{file_ext}"
+            file_path = os.path.join(guild_dir, filename)
             
-            embed.add_field(
-                name="Background Color",
-                value=f"RGB: {settings['background_color']}\nHex: #{bg_r:02x}{bg_g:02x}{bg_b:02x}",
-                inline=True
-            )
+            # Download the image
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url) as resp:
+                    if resp.status != 200:
+                        await ctx.send("Failed to download the image. Please try another image URL.", delete_after=10)
+                        return
+                    
+                    # Save the image
+                    with open(file_path, 'wb') as f:
+                        f.write(await resp.read())
             
-            embed.add_field(
-                name="Accent Color",
-                value=f"RGB: {settings['accent_color']}\nHex: #{accent_r:02x}{accent_g:02x}{accent_b:02x}",
-                inline=True
-            )
+            # Save to database - store the path relative to EXTERNAL_VOLUME_PATH
+            # This makes it portable if the external volume gets mounted elsewhere
+            relative_path = os.path.relpath(file_path, EXTERNAL_VOLUME_PATH)
+            success = await set_user_background(guild_id, user_id, relative_path)
             
-            embed.add_field(
-                name="Text Color",
-                value=f"RGB: {settings['text_color']}\nHex: #{text_r:02x}{text_g:02x}{text_b:02x}",
-                inline=True
-            )
-            
-            if settings["background_image"]:
-                embed.add_field(
-                    name="Background Image",
-                    value=f"Custom background image set",
-                    inline=False
+            if success:
+                embed = discord.Embed(
+                    title="Background Set",
+                    description="Your custom level card background has been set!",
+                    color=discord.Color.green()
                 )
-            
-            embed.add_field(
-                name="Customization Commands",
-                value=(
-                    "Use the following commands to customize your card:\n"
-                    "`!setcardbg R,G,B` - Set background color\n"
-                    "`!setcardaccent R,G,B` - Set accent color\n"
-                    "`!setcardtext R,G,B` - Set text color\n"
-                    "`!resetcard` - Reset to default\n\n"
-                    "Example: `!setcardbg 50,50,50`"
-                ),
-                inline=False
-            )
-            
-        except ValueError:
-            embed.add_field(
-                name="Error",
-                value="There was an error parsing your color settings. Try resetting with `!resetcard`",
-                inline=False
-            )
-        
-        await ctx.send(embed=embed)
-    
-    @commands.command(name="setcardbg", aliases=["scbg"])
-    async def set_card_background(self, ctx, color: str):
-        """Set your level card background color (R,G,B format)
-        
-        Example: !setcardbg 50,50,50
-        """
-        if not validate_rgb_color(color):
-            return await ctx.send("⚠️ Invalid color format. Use R,G,B format (e.g., 50,50,50)")
+                embed.set_image(url=url)
+                await ctx.send(embed=embed)
+            else:
+                await ctx.send("There was an error setting your background. Please try again later.", delete_after=10)
+                
+        except Exception as e:
+            logging.error(f"Error setting background: {e}")
+            await ctx.send("Failed to set your background. Please try again with a different image.", delete_after=10)
+
+    @commands.command(name="removebackground", aliases=["removebg", "resetbg"])
+    async def remove_background(self, ctx):
+        """Remove your custom level card background."""
+        await ctx.message.delete()
         
         guild_id = str(ctx.guild.id)
         user_id = str(ctx.author.id)
         
-        success = await update_level_card_setting(guild_id, user_id, "background_color", color)
+        # Get current background path
+        relative_path = await get_user_background(guild_id, user_id)
+        
+        if not relative_path:
+            await ctx.send("You don't have a custom background set!", delete_after=10)
+            return
+        
+        # Delete file if it exists
+        try:
+            full_path = os.path.join(EXTERNAL_VOLUME_PATH, relative_path)
+            if os.path.exists(full_path):
+                os.remove(full_path)
+                logging.info(f"Removed background file: {full_path}")
+        except Exception as e:
+            logging.error(f"Error removing background file: {e}")
+        
+        # Remove from database
+        success = await remove_user_background(guild_id, user_id)
         
         if success:
-            # Parse the color to use in the embed
-            r, g, b = map(int, color.split(','))
-            
-            embed = discord.Embed(
-                title="Level Card Updated",
-                description="Your level card background color has been updated.",
-                color=discord.Color.from_rgb(r, g, b)
-            )
-            
-            embed.add_field(
-                name="New Background Color",
-                value=f"RGB: {color}\nHex: #{r:02x}{g:02x}{b:02x}",
-                inline=False
-            )
-            
-            embed.set_footer(text="Use !level to see your updated card")
-            
-            await ctx.send(embed=embed)
+            await ctx.send("Your custom background has been removed!", delete_after=10)
         else:
-            await ctx.send("❌ Failed to update level card settings. Please try again.")
-    
-    @commands.command(name="setcardaccent", aliases=["sca"])
-    async def set_card_accent(self, ctx, color: str):
-        """Set your level card accent color (R,G,B format)
+            await ctx.send("There was an error removing your background. Please try again later.", delete_after=10)
+
+    @commands.command(name="showbackground", aliases=["showbg", "mybg"])
+    async def show_background(self, ctx, member: discord.Member = None):
+        """Show the current background for your level card or another member's."""
+        await ctx.message.delete()
         
-        Example: !setcardaccent 0,150,200
-        """
-        if not validate_rgb_color(color):
-            return await ctx.send("⚠️ Invalid color format. Use R,G,B format (e.g., 0,150,200)")
-        
+        member = member or ctx.author
         guild_id = str(ctx.guild.id)
-        user_id = str(ctx.author.id)
+        user_id = str(member.id)
         
-        success = await update_level_card_setting(guild_id, user_id, "accent_color", color)
+        # Get background path
+        relative_path = await get_user_background(guild_id, user_id)
         
-        if success:
-            # Parse the color to use in the embed
-            r, g, b = map(int, color.split(','))
-            
+        if not relative_path:
+            await ctx.send(f"{member.mention} doesn't have a custom background set!", delete_after=10)
+            return
+        
+        # Get full path
+        full_path = os.path.join(EXTERNAL_VOLUME_PATH, relative_path)
+        
+        if not os.path.exists(full_path):
+            await ctx.send(f"Background file not found! The file may have been moved or deleted.", delete_after=10)
+            return
+        
+        # Show the background
+        try:
+            file = discord.File(full_path, filename="background.png")
             embed = discord.Embed(
-                title="Level Card Updated",
-                description="Your level card accent color has been updated.",
-                color=discord.Color.from_rgb(r, g, b)
-            )
-            
-            embed.add_field(
-                name="New Accent Color",
-                value=f"RGB: {color}\nHex: #{r:02x}{g:02x}{b:02x}",
-                inline=False
-            )
-            
-            embed.set_footer(text="Use !level to see your updated card")
-            
-            await ctx.send(embed=embed)
-        else:
-            await ctx.send("❌ Failed to update level card settings. Please try again.")
-    
-    @commands.command(name="setcardtext", aliases=["sct"])
-    async def set_card_text(self, ctx, color: str):
-        """Set your level card text color (R,G,B format)
-        
-        Example: !setcardtext 255,255,255
-        """
-        if not validate_rgb_color(color):
-            return await ctx.send("⚠️ Invalid color format. Use R,G,B format (e.g., 255,255,255)")
-        
-        guild_id = str(ctx.guild.id)
-        user_id = str(ctx.author.id)
-        
-        success = await update_level_card_setting(guild_id, user_id, "text_color", color)
-        
-        if success:
-            # Parse the color to use in the embed
-            r, g, b = map(int, color.split(','))
-            
-            embed = discord.Embed(
-                title="Level Card Updated",
-                description="Your level card text color has been updated.",
-                color=discord.Color.from_rgb(r, g, b)
-            )
-            
-            embed.add_field(
-                name="New Text Color",
-                value=f"RGB: {color}\nHex: #{r:02x}{g:02x}{b:02x}",
-                inline=False
-            )
-            
-            embed.set_footer(text="Use !level to see your updated card")
-            
-            await ctx.send(embed=embed)
-        else:
-            await ctx.send("❌ Failed to update level card settings. Please try again.")
-    
-    @commands.command(name="resetcard")
-    async def reset_card(self, ctx):
-        """Reset your level card to the default settings"""
-        guild_id = str(ctx.guild.id)
-        user_id = str(ctx.author.id)
-        
-        success = await reset_level_card_settings(guild_id, user_id)
-        
-        if success:
-            embed = discord.Embed(
-                title="Level Card Reset",
-                description="Your level card has been reset to default settings.",
+                title=f"{member.display_name}'s Background",
                 color=discord.Color.blue()
             )
-            
-            await ctx.send(embed=embed)
-        else:
-            await ctx.send("❌ Failed to reset level card settings. Please try again.")
+            embed.set_image(url="attachment://background.png")
+            await ctx.send(file=file, embed=embed)
+        except Exception as e:
+            logging.error(f"Error showing background: {e}")
+            await ctx.send("An error occurred while trying to show the background image.", delete_after=10)
 
-    # Add a slash command version
-    @app_commands.command(name="cardstyle", description="View and customize your level card")
-    async def card_style(self, interaction: discord.Interaction):
-        """View your level card style settings as a slash command"""
-        guild_id = str(interaction.guild.id)
-        user_id = str(interaction.user.id)
-        
-        settings = await get_level_card_settings(guild_id, user_id)
-        
-        embed = discord.Embed(
-            title="Your Level Card Settings",
-            description="Here are your current level card color settings",
-            color=discord.Color.blue()
-        )
-        
-        # Parse the colors to use in the embed
-        try:
-            bg_r, bg_g, bg_b = map(int, settings["background_color"].split(','))
-            accent_r, accent_g, accent_b = map(int, settings["accent_color"].split(','))
-            text_r, text_g, text_b = map(int, settings["text_color"].split(','))
-            
-            embed.color = discord.Color.from_rgb(accent_r, accent_g, accent_b)
-            
-            embed.add_field(
-                name="Background Color",
-                value=f"RGB: {settings['background_color']}\nHex: #{bg_r:02x}{bg_g:02x}{bg_b:02x}",
-                inline=True
-            )
-            
-            embed.add_field(
-                name="Accent Color",
-                value=f"RGB: {settings['accent_color']}\nHex: #{accent_r:02x}{accent_g:02x}{accent_b:02x}",
-                inline=True
-            )
-            
-            embed.add_field(
-                name="Text Color",
-                value=f"RGB: {settings['text_color']}\nHex: #{text_r:02x}{text_g:02x}{text_b:02x}",
-                inline=True
-            )
-            
-            if settings["background_image"]:
-                embed.add_field(
-                    name="Background Image",
-                    value=f"Custom background image set",
-                    inline=False
-                )
-            
-            embed.add_field(
-                name="Customization Commands",
-                value=(
-                    "Use the following commands to customize your card:\n"
-                    "`!setcardbg R,G,B` - Set background color\n"
-                    "`!setcardaccent R,G,B` - Set accent color\n"
-                    "`!setcardtext R,G,B` - Set text color\n"
-                    "`!resetcard` - Reset to default\n\n"
-                    "Example: `!setcardbg 50,50,50`"
-                ),
-                inline=False
-            )
-            
-        except ValueError:
-            embed.add_field(
-                name="Error",
-                value="There was an error parsing your color settings. Try resetting with `!resetcard`",
-                inline=False
-            )
-        
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-
-# Setup function for the cog
-async def setup(bot):
-    await bot.add_cog(CardCustomizationCommands(bot))
+def setup(bot):
+    bot.add_cog(BackgroundCommands(bot))

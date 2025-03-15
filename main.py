@@ -9,7 +9,7 @@ from cogs.leveling import LevelingCommands
 from cogs.admin import AdminCommands
 from cogs.help import CustomHelpCommand
 from cogs.config_commands import ConfigCommands
-from cogs.card_customization import CardCustomizationCommands
+from cogs.card_customization import BackgroundCommands
 
 # Configure logging
 logging.basicConfig(
@@ -51,7 +51,7 @@ def setup_bot():
         await bot.add_cog(AdminCommands(bot))
         await bot.add_cog(CustomHelpCommand(bot))
         await bot.add_cog(ConfigCommands(bot)) 
-        await bot.add_cog(CardCustomizationCommands(bot)) 
+        await bot.add_cog(BackgroundCommands(bot)) 
         await bot.tree.sync()
 
     # Make this method accessible
@@ -83,6 +83,15 @@ def run_bot():
         from utils.async_image_processor import start_image_processor
         await start_image_processor(bot)
         logging.info("Image processor started")
+        
+        # Ensure background directory exists and is accessible
+        from utils.background_api import BACKGROUNDS_DIR
+        if not os.path.exists(BACKGROUNDS_DIR):
+            try:
+                os.makedirs(BACKGROUNDS_DIR, exist_ok=True)
+                logging.info(f"Created backgrounds directory: {BACKGROUNDS_DIR}")
+            except Exception as e:
+                logging.error(f"Failed to create backgrounds directory: {e}")
         
         await bot.setup_cogs()
         await bot.tree.sync()

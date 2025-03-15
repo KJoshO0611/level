@@ -2,7 +2,8 @@ import discord
 from discord.ext import commands
 from modules.levels import xp_to_next_level
 from modules.databasev2 import get_leaderboard, get_user_levels, get_user_rank
-from utils.image_generator import generate_level_card, generate_leaderboard_image
+# Import the new Cairo-based image generator instead of the old one
+from utils.cairo_image_generator import generate_level_card, generate_leaderboard_image
 from utils.simple_image_handler import generate_image_nonblocking, update_with_image
 import logging
 
@@ -38,6 +39,7 @@ class LevelingCommands(commands.Cog):
                 message, _ = await generate_image_nonblocking(ctx, "level card")
                 
                 # Generate the image (this won't block the bot)
+                # This now uses the Cairo-based implementation but maintains the same interface
                 image_bytes = await generate_level_card(member, level_value, xp, next_level_xp)
                 
                 # Update the message with the image
@@ -70,6 +72,7 @@ class LevelingCommands(commands.Cog):
             message, _ = await generate_image_nonblocking(ctx, "leaderboard")
             
             # Generate the leaderboard image (this won't block)
+            # This now uses the Cairo-based implementation but maintains the same interface
             image_bytes = await generate_leaderboard_image(ctx.guild, rows, start_rank=(offset + 1))
             
             # Update the message with the image
