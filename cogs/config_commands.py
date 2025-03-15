@@ -3,15 +3,19 @@ from discord import app_commands
 from discord.ext import commands
 from typing import Optional, Literal
 import logging
+import time
+from datetime import datetime
 from modules.databasev2 import (
     set_level_up_channel, 
     get_level_up_channel, 
-    set_channel_boost_db, 
     remove_channel_boost_db,
     get_level_roles,
     create_level_role,
     delete_level_role,
-    invalidate_guild_cache
+    invalidate_guild_cache,
+    get_server_xp_settings,
+    update_server_xp_settings,
+    reset_server_xp_settings,
 )
 from config import load_config, XP_SETTINGS
 
@@ -28,26 +32,48 @@ class ConfigView(discord.ui.View):
     @discord.ui.button(label="XP Settings", style=discord.ButtonStyle.primary)
     async def xp_settings(self, interaction: discord.Interaction, button: discord.ui.Button):
         """Show current XP settings"""
+        guild_id = str(interaction.guild.id)
+        settings = await get_server_xp_settings(guild_id)
+        
         embed = discord.Embed(
             title="XP Settings",
             description="Current XP configuration for this server",
             color=discord.Color.blue()
         )
         
-        embed.add_field(name="XP Cooldown", value=f"{XP_SETTINGS['COOLDOWN']} seconds", inline=True)
-        embed.add_field(name="Min XP per Message", value=f"{XP_SETTINGS['MIN']} XP", inline=True)
-        embed.add_field(name="Max XP per Message", value=f"{XP_SETTINGS['MAX']} XP", inline=True)
+        embed.add_field(name="Min XP per Message", value=f"{settings['min_xp']} XP", inline=True)
+        embed.add_field(name="Max XP per Message", value=f"{settings['max_xp']} XP", inline=True)
+        embed.add_field(name="XP Cooldown", value=f"{settings['cooldown']} seconds", inline=True)
         
-        embed.add_field(name="Voice XP Rates", value=(
-            f"• Active: {XP_SETTINGS['RATES']['active']} XP/min\n"
-            f"• Muted: {XP_SETTINGS['RATES']['muted']} XP/min\n"
-            f"• Idle: {XP_SETTINGS['RATES']['idle']} XP/min\n"
-            f"• Streaming: {XP_SETTINGS['RATES']['streaming']} XP/min\n"
-            f"• Watching: {XP_SETTINGS['RATES']['watching']} XP/min"
-        ), inline=False)
+        # Get the global settings for comparison
+        # Only show if different from defaults
+        if (settings['min_xp'] != XP_SETTINGS['MIN'] or 
+            settings['max_xp'] != XP_SETTINGS['MAX'] or 
+            settings['cooldown'] != XP_SETTINGS['COOLDOWN']):
+            
+            embed.add_field(
+                name="Default Settings",
+                value=(
+                    f"Min XP: {XP_SETTINGS['MIN']} XP\n"
+                    f"Max XP: {XP_SETTINGS['MAX']} XP\n"
+                    f"Cooldown: {XP_SETTINGS['COOLDOWN']} seconds"
+                ),
+                inline=False
+            )
+        
+        embed.add_field(
+            name="Voice XP Rates", 
+            value=(
+                f"• Active: {XP_SETTINGS['RATES']['active']} XP/min\n"
+                f"• Muted: {XP_SETTINGS['RATES']['muted']} XP/min\n"
+                f"• Idle: {XP_SETTINGS['RATES']['idle']} XP/min\n"
+                f"• Streaming: {XP_SETTINGS['RATES']['streaming']} XP/min\n"
+                f"• Watching: {XP_SETTINGS['RATES']['watching']} XP/min"
+            ), 
+            inline=False
+        )
         
         # Get level-up channel info
-        guild_id = str(interaction.guild.id)
         channel_id = await get_level_up_channel(guild_id)
         level_up_channel = "Not set" if not channel_id else f"<#{channel_id}>"
         
@@ -171,46 +197,6 @@ class ConfigCommands(commands.Cog):
             ephemeral=True
         )
     
-    @app_commands.command(name="xpboost", description="Set an XP boost multiplier for a channel")
-    @app_commands.describe(
-        channel="The channel to apply the XP boost to",
-        multiplier="The XP multiplier (0.1-5.0)"
-    )
-    @app_commands.checks.has_permissions(administrator=True)
-    async def xp_boost(
-        self, 
-        interaction: discord.Interaction, 
-        channel: discord.abc.GuildChannel,
-        multiplier: float
-    ):
-        """Set an XP boost for a specific channel"""
-        # Validate the channel type
-        if not isinstance(channel, (discord.VoiceChannel, discord.TextChannel)):
-            await interaction.response.send_message(
-                "⚠️ XP boosts can only be applied to text or voice channels.",
-                ephemeral=True
-            )
-            return
-        
-        # Validate the multiplier
-        if multiplier < 0.1 or multiplier > 5.0:
-            await interaction.response.send_message(
-                "⚠️ Boost multiplier must be between 0.1 and 5.0",
-                ephemeral=True
-            )
-            return
-        
-        # Set the boost
-        guild_id = str(interaction.guild.id)
-        channel_id = str(channel.id)
-        await set_channel_boost_db(guild_id, channel_id, multiplier)
-        
-        channel_type = "voice" if isinstance(channel, discord.VoiceChannel) else "text"
-        await interaction.response.send_message(
-            f"✅ Set XP boost for {channel_type} channel '{channel.name}' to {multiplier}x",
-            ephemeral=True
-        )
-    
     @app_commands.command(name="removeboost", description="Remove an XP boost from a channel")
     @app_commands.describe(channel="The channel to remove the XP boost from")
     @app_commands.checks.has_permissions(administrator=True)
@@ -317,7 +303,159 @@ class ConfigCommands(commands.Cog):
                 ephemeral=True
             )
 
+    # New XP settings slash commands
+    @app_commands.command(name="xpsettings", description="View current XP settings for the server")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def xp_settings(self, interaction: discord.Interaction):
+        """View current XP settings for the server"""
+        guild_id = str(interaction.guild.id)
+        settings = await get_server_xp_settings(guild_id)
+        
+        embed = discord.Embed(
+            title="Server XP Settings",
+            description="Current XP configuration for this server",
+            color=discord.Color.blue()
+        )
+        
+        embed.add_field(name="Min XP per Message", value=f"{settings['min_xp']} XP", inline=True)
+        embed.add_field(name="Max XP per Message", value=f"{settings['max_xp']} XP", inline=True)
+        embed.add_field(name="XP Cooldown", value=f"{settings['cooldown']} seconds", inline=True)
+        
+        # Get the global settings for comparison
+        # Only show if different from defaults
+        if (settings['min_xp'] != XP_SETTINGS['MIN'] or 
+            settings['max_xp'] != XP_SETTINGS['MAX'] or 
+            settings['cooldown'] != XP_SETTINGS['COOLDOWN']):
+            
+            embed.add_field(
+                name="Default Settings",
+                value=(
+                    f"Min XP: {XP_SETTINGS['MIN']} XP\n"
+                    f"Max XP: {XP_SETTINGS['MAX']} XP\n"
+                    f"Cooldown: {XP_SETTINGS['COOLDOWN']} seconds"
+                ),
+                inline=False
+            )
+        
+        embed.add_field(
+            name="Voice XP Rates", 
+            value=(
+                f"• Active: {XP_SETTINGS['RATES']['active']} XP/min\n"
+                f"• Muted: {XP_SETTINGS['RATES']['muted']} XP/min\n"
+                f"• Idle: {XP_SETTINGS['RATES']['idle']} XP/min\n"
+                f"• Streaming: {XP_SETTINGS['RATES']['streaming']} XP/min\n"
+                f"• Watching: {XP_SETTINGS['RATES']['watching']} XP/min"
+            ), 
+            inline=False
+        )
+        
+        embed.add_field(
+            name="Commands",
+            value=(
+                "Use these slash commands to configure XP settings:\n"
+                "`/setminxp` - Set minimum XP\n"
+                "`/setmaxxp` - Set maximum XP\n"
+                "`/setcooldown` - Set XP cooldown\n"
+                "`/resetxpsettings` - Reset to defaults"
+            ),
+            inline=False
+        )
+        
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
+    @app_commands.command(name="setminxp", description="Set the minimum XP awarded per message")
+    @app_commands.describe(value="The minimum XP value (1-100)")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def set_min_xp(self, interaction: discord.Interaction, value: int):
+        """Set the minimum XP awarded per message"""
+        if value < 1 or value > 100:
+            return await interaction.response.send_message("⚠️ Min XP must be between 1 and 100", ephemeral=True)
+        
+        guild_id = str(interaction.guild.id)
+        
+        # First get current settings to check max XP
+        settings = await get_server_xp_settings(guild_id)
+        
+        if value > settings["max_xp"]:
+            return await interaction.response.send_message(
+                f"⚠️ Min XP cannot be greater than max XP ({settings['max_xp']})", ephemeral=True
+            )
+        
+        # Update setting
+        success = await update_server_xp_settings(guild_id, {"min_xp": value})
+        
+        if success:
+            await interaction.response.send_message(f"✅ Minimum XP set to {value}", ephemeral=True)
+        else:
+            await interaction.response.send_message("❌ Failed to update XP settings", ephemeral=True)
+
+    @app_commands.command(name="setmaxxp", description="Set the maximum XP awarded per message")
+    @app_commands.describe(value="The maximum XP value (1-500)")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def set_max_xp(self, interaction: discord.Interaction, value: int):
+        """Set the maximum XP awarded per message"""
+        if value < 1 or value > 500:
+            return await interaction.response.send_message("⚠️ Max XP must be between 1 and 500", ephemeral=True)
+        
+        guild_id = str(interaction.guild.id)
+        
+        # First get current settings to check min XP
+        settings = await get_server_xp_settings(guild_id)
+        
+        if value < settings["min_xp"]:
+            return await interaction.response.send_message(
+                f"⚠️ Max XP cannot be less than min XP ({settings['min_xp']})", ephemeral=True
+            )
+        
+        # Update setting
+        success = await update_server_xp_settings(guild_id, {"max_xp": value})
+        
+        if success:
+            await interaction.response.send_message(f"✅ Maximum XP set to {value}", ephemeral=True)
+        else:
+            await interaction.response.send_message("❌ Failed to update XP settings", ephemeral=True)
+
+    @app_commands.command(name="setcooldown", description="Set the cooldown between XP awards (in seconds)")
+    @app_commands.describe(seconds="Cooldown in seconds (5-600)")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def set_cooldown(self, interaction: discord.Interaction, seconds: int):
+        """Set the cooldown between XP awards (in seconds)"""
+        if seconds < 5 or seconds > 600:
+            return await interaction.response.send_message("⚠️ Cooldown must be between 5 and 600 seconds", ephemeral=True)
+        
+        guild_id = str(interaction.guild.id)
+        
+        # Update setting
+        success = await update_server_xp_settings(guild_id, {"cooldown": seconds})
+        
+        if success:
+            await interaction.response.send_message(f"✅ XP cooldown set to {seconds} seconds", ephemeral=True)
+        else:
+            await interaction.response.send_message("❌ Failed to update XP settings", ephemeral=True)
+
+    @app_commands.command(name="resetxpsettings", description="Reset XP settings to defaults")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def reset_xp_settings(self, interaction: discord.Interaction):
+        """Reset XP settings to defaults"""
+        guild_id = str(interaction.guild.id)
+        
+        success = await reset_server_xp_settings(guild_id)
+        
+        if success:
+            embed = discord.Embed(
+                title="XP Settings Reset",
+                description="Server XP settings have been reset to defaults",
+                color=discord.Color.green()
+            )
+            
+            embed.add_field(name="Min XP per Message", value=f"{XP_SETTINGS['MIN']} XP", inline=True)
+            embed.add_field(name="Max XP per Message", value=f"{XP_SETTINGS['MAX']} XP", inline=True)
+            embed.add_field(name="XP Cooldown", value=f"{XP_SETTINGS['COOLDOWN']} seconds", inline=True)
+            
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+        else:
+            await interaction.response.send_message("❌ Failed to reset XP settings", ephemeral=True)
+    
 # Setup function for the cog
 async def setup(bot):
     await bot.add_cog(ConfigCommands(bot))
