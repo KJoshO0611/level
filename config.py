@@ -1,7 +1,7 @@
 import os
-#from dotenv import load_dotenv
+from dotenv import load_dotenv
 
-#load_dotenv()
+load_dotenv()
 
 EXTERNAL_VOLUME_PATH = "/external_volume" 
 
@@ -22,7 +22,7 @@ XP_SETTINGS = {
 
 # Paths
 PATHS = {
-    "FONT_PATH": "assets/fonts/VCR_OSD_MONO_1.001.ttf",
+    "FONT_PATH": "data/fonts/",
     "DATABASE_PATH": "root/database/levels.db"
 }
 

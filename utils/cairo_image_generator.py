@@ -9,18 +9,104 @@ import math
 import os
 import random
 import tempfile
-from PIL import Image
+from PIL import Image, ImageFont, ImageDraw
 from config import load_config
+import bidi.algorithm
+import unicodedata
+import re
 
 # Load configuration
 config = load_config()
-FONT_PATH = config["PATHS"]["FONT_PATH"]
+#FONT_PATH = config["PATHS"]["FONT_PATH"]
 EXTERNAL_VOLUME_PATH = config.get("EXTERNAL_VOLUME_PATH", "/external_volume")
+
+# Font paths - update these to match your system
+FONT_PATHS = {
+    'default': os.path.join(EXTERNAL_VOLUME_PATH, 'fonts/NotoSans-Regular.ttf'),
+    'arabic': os.path.join(EXTERNAL_VOLUME_PATH, 'fonts/NotoSansArabic-Regular.ttf'),
+    'cjk': os.path.join(EXTERNAL_VOLUME_PATH, 'fonts/NotoSansCJK-Regular.ttc'),
+    'cyrillic': os.path.join(EXTERNAL_VOLUME_PATH, 'fonts/NotoSans-Regular.ttf'),
+    'devanagari': os.path.join(EXTERNAL_VOLUME_PATH, 'fonts/NotoSansDevanagari-Regular.ttf'),
+    'thai': os.path.join(EXTERNAL_VOLUME_PATH, 'fonts/NotoSansThai-Regular.ttf'),
+    'hebrew': os.path.join(EXTERNAL_VOLUME_PATH, 'fonts/NotoSansHebrew-Regular.ttf'),
+    'baybayin': os.path.join(EXTERNAL_VOLUME_PATH, 'fonts/NotoSansTagalog-Regular.ttf')
+}
 
 # Default colors
 DEFAULT_BG_COLOR = (40/255, 40/255, 40/255)
 DEFAULT_ACCENT_COLOR = (0/255, 200/255, 200/255)
 DEFAULT_TEXT_COLOR = (255/255, 255/255, 255/255)
+
+def detect_script(text):
+    """
+    Detect the script of the given text.
+    Returns the detected script name (Arabic, CJK, Cyrillic, etc.)
+    """
+    # Define Unicode ranges for different scripts
+    script_ranges = {
+        'Arabic': [
+            (0x0600, 0x06FF),  # Arabic
+            (0x0750, 0x077F),  # Arabic Supplement
+            (0x08A0, 0x08FF),  # Arabic Extended-A
+        ],
+        'CJK': [
+            (0x4E00, 0x9FFF),  # CJK Unified Ideographs
+            (0x3040, 0x309F),  # Hiragana
+            (0x30A0, 0x30FF),  # Katakana
+            (0x3130, 0x318F),  # Hangul Compatibility Jamo
+            (0xAC00, 0xD7AF),  # Hangul Syllables
+        ],
+        'Cyrillic': [
+            (0x0400, 0x04FF),  # Cyrillic
+            (0x0500, 0x052F),  # Cyrillic Supplement
+        ],
+        'Devanagari': [
+            (0x0900, 0x097F),  # Devanagari
+        ],
+        'Thai': [
+            (0x0E00, 0x0E7F),  # Thai
+        ],
+        'Hebrew': [
+            (0x0590, 0x05FF),  # Hebrew
+        ],
+        'Baybayin': [
+            (0x1700, 0x171F),  # Tagalog (Baybayin) script block
+        ],
+        'Latin': [
+            (0x0020, 0x007F),  # Basic Latin
+            (0x00A0, 0x00FF),  # Latin-1 Supplement
+            (0x0100, 0x017F),  # Latin Extended-A
+            (0x0180, 0x024F),  # Latin Extended-B
+        ]
+    }
+    
+    # Count characters in each script
+    script_counts = {script: 0 for script in script_ranges}
+    
+    for char in text:
+        code_point = ord(char)
+        for script, ranges in script_ranges.items():
+            for start, end in ranges:
+                if start <= code_point <= end:
+                    script_counts[script] += 1
+                    break
+    
+    # Find script with most characters
+    max_script = max(script_counts.items(), key=lambda x: x[1])
+    
+    # If no script detected or mostly Latin, return None
+    if max_script[1] == 0 or max_script[0] == 'Latin':
+        return None
+    
+    return max_script[0]
+
+def measure_text_size(text, font):
+    """Measure text dimensions using PIL"""
+    # Use PIL's getbbox for text measurement
+    bbox = font.getbbox(text)
+    text_width = bbox[2] - bbox[0]
+    text_height = bbox[3] - bbox[1]
+    return text_width, text_height
 
 def load_image_surface(img_path, width=None, height=None):
     """Load an image into a Cairo surface"""
@@ -44,7 +130,7 @@ def load_image_surface(img_path, width=None, height=None):
         
         return surface
     except Exception as e:
-        logging.error(f"Error loading image surface: {e}")
+        print(f"Error loading image surface: {e}")
         return None
 
 def load_surface_from_bytes(bytes_io, width=None, height=None):
@@ -69,15 +155,80 @@ def load_surface_from_bytes(bytes_io, width=None, height=None):
         
         return surface
     except Exception as e:
-        logging.error(f"Error loading image from bytes: {e}")
+        print(f"Error loading image from bytes: {e}")
         return None
+
+def draw_text_with_pil(ctx, text, x, y, pil_font, rgb_color=(1, 1, 1), centered=False):
+    """
+    Draw text using PIL for font handling and Cairo for rendering
+    
+    Parameters:
+    - ctx: Cairo context
+    - text: Text to draw
+    - x, y: Position to draw text
+    - pil_font: PIL ImageFont object
+    - rgb_color: RGB color tuple in range 0-1
+    - centered: If True, center the text at (x,y)
+    """
+    # Measure text using PIL
+    text_width, text_height = measure_text_size(text, pil_font)
+    
+    # Calculate position for centered text if needed
+    position_x = x
+    position_y = y
+    if centered:
+        position_x = x - text_width // 2
+        position_y = y - text_height // 2
+    
+    # Convert the text to a temporary PIL image with transparency
+    # This is needed because Cairo cannot directly use PIL fonts
+    temp_img = Image.new('RGBA', (text_width + 10, text_height + 20), (0, 0, 0, 0))
+    temp_draw = ImageDraw.Draw(temp_img)
+    temp_draw.text((5, 5), text, font=pil_font, fill=(255, 255, 255, 255))
+    
+    # Create a numpy array from the PIL image
+    import numpy as np
+    arr = np.array(temp_img)
+    
+    # Create a Cairo surface from the numpy array
+    h, w, _ = arr.shape
+    
+    # Create temporary Cairo surface to hold the text
+    text_surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, w, h)
+    text_ctx = cairo.Context(text_surface)
+    
+    # Cairo uses ARGB format, PIL uses RGBA - we need to swap the channels
+    # Extract alpha channel and RGB channels
+    alpha = arr[:, :, 3] / 255.0
+    r = arr[:, :, 0] / 255.0
+    g = arr[:, :, 1] / 255.0
+    b = arr[:, :, 2] / 255.0
+    
+    # Apply the color tint
+    r = r * rgb_color[0]
+    g = g * rgb_color[1]
+    b = b * rgb_color[2]
+    
+    # For each pixel, set the color and alpha
+    for y_pos in range(h):
+        for x_pos in range(w):
+            a = alpha[y_pos, x_pos]
+            text_ctx.set_source_rgba(r[y_pos, x_pos], g[y_pos, x_pos], b[y_pos, x_pos], a)
+            text_ctx.rectangle(x_pos, y_pos, 1, 1)
+            text_ctx.fill()
+    
+    # Draw the text surface on the main surface
+    ctx.set_source_surface(text_surface, position_x, position_y)
+    ctx.paint()
+    
+    return text_width, text_height
 
 # Synchronous function to generate a level card using Cairo
 def _generate_level_card_cairo_sync(avatar_bytes, username, user_id, level, xp, xp_needed, 
                                    background_path=None, rank=None, status="online", 
                                    status_pos_x=80, status_pos_y=90):
     """Generate a Discord-style level card image using Cairo"""
-    # Default colors (no more card_settings object)
+    # Default colors
     background_color = DEFAULT_BG_COLOR
     accent_color = DEFAULT_ACCENT_COLOR
     text_color = DEFAULT_TEXT_COLOR
@@ -112,7 +263,7 @@ def _generate_level_card_cairo_sync(avatar_bytes, username, user_id, level, xp, 
                 ctx.restore()
                 use_default_background = False
         except Exception as e:
-            logging.error(f"Error loading background image: {e}")
+            print(f"Error loading background image: {e}")
             use_default_background = True
     
     # Create dark gradient background if needed
@@ -171,7 +322,7 @@ def _generate_level_card_cairo_sync(avatar_bytes, username, user_id, level, xp, 
                 
                 draw_default_avatar = False
         except Exception as e:
-            logging.error(f"Error processing avatar: {e}")
+            print(f"Error processing avatar: {e}")
             draw_default_avatar = True
     
     # Draw default avatar if needed
@@ -203,6 +354,11 @@ def _generate_level_card_cairo_sync(avatar_bytes, username, user_id, level, xp, 
     status_size = 18
     border_size = 2
     
+    # Use original status position if provided, otherwise calculate based on avatar
+    if status_pos_x == 80 and status_pos_y == 90:  # If using default values
+        status_pos_x = avatar_pos_x + avatar_size - status_size/2
+        status_pos_y = avatar_pos_y + avatar_size - status_size/2
+    
     # Draw outer circle (border)
     ctx.arc(status_pos_x, status_pos_y, status_size/2, 0, 2 * math.pi)
     ctx.set_source_rgb(30/255, 30/255, 30/255)  # Dark color for border
@@ -213,51 +369,83 @@ def _generate_level_card_cairo_sync(avatar_bytes, username, user_id, level, xp, 
     ctx.set_source_rgb(*status_color)  # Status color
     ctx.fill()
     
-    # Set up fonts
-    username_font_size = 22
-    small_font_size = 16
-    rank_font_size = 26
-    
     # XP bar settings
     xp_bar_width = width - (avatar_pos_x + avatar_size + 20) - 20  # 20px padding from right edge
     xp_bar_height = 15
     xp_bar_x = avatar_pos_x + avatar_size + 20
     xp_bar_y = height // 2 + 20
     
-    # Draw username - positioned just above the XP bar
-    ctx.select_font_face("Arial", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
-    ctx.set_font_size(username_font_size)
-    ctx.set_source_rgb(*text_color)  # Use custom text color
+    # Detect script based on username
+    detected_script = detect_script(username)
     
-    # New position - 8 pixels above the XP bar
-    username_y = xp_bar_y - 8
-    ctx.move_to(xp_bar_x, username_y)
-    ctx.show_text(username)
+    # Select appropriate font based on script
+    font_path = FONT_PATHS['default']
+    is_rtl = False
+    
+    if detected_script:
+        if detected_script == "Arabic" or detected_script == "Hebrew":
+            is_rtl = True
+            if detected_script == "Arabic":
+                font_path = FONT_PATHS['arabic']
+            else:  # Hebrew
+                font_path = FONT_PATHS['hebrew']
+        elif detected_script == "CJK":
+            font_path = FONT_PATHS['cjk']
+        elif detected_script == "Cyrillic":
+            font_path = FONT_PATHS['cyrillic']
+        elif detected_script == "Devanagari":
+            font_path = FONT_PATHS['devanagari']
+        elif detected_script == "Thai":
+            font_path = FONT_PATHS['thai']
+        elif detected_script == "Baybayin":
+            font_path = FONT_PATHS['baybayin']
+    
+    # Process with python-bidi for RTL text if needed
+    display_username = username
+    if is_rtl:
+        display_username = bidi.algorithm.get_display(username)
+    
+    # Font sizes for all text elements
+    username_font_size = 22
+    small_font_size = 16
+    rank_font_size = 26
+    
+    # Create PIL fonts
+    username_pil_font = ImageFont.truetype(font_path, username_font_size)
+    # Use default font for all English labels
+    default_pil_font = ImageFont.truetype(FONT_PATHS['default'], small_font_size)
+    rank_pil_font = ImageFont.truetype(FONT_PATHS['default'], rank_font_size)
+    
+    # Draw username - positioned just above the XP bar
+    # Get username position
+    username_y = xp_bar_y - 35
+    # Draw username with appropriate font
+    draw_text_with_pil(ctx, display_username, xp_bar_x, username_y, username_pil_font, text_color)
     
     # Get text extents for proper positioning of user_id
-    text_extents = ctx.text_extents(username)
-    username_width = text_extents.width
+    username_width, _ = measure_text_size(display_username, username_pil_font)
     
-    # Draw user ID - aligned with username
-    ctx.select_font_face("Arial", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL)
-    ctx.set_font_size(small_font_size)
-    ctx.set_source_rgb(180/255, 180/255, 180/255)  # Gray color
-    ctx.move_to(xp_bar_x + username_width + 5, username_y + (username_font_size - small_font_size)/2)
-    ctx.show_text(user_id)
+    # Draw user ID - aligned with username and always in English
+    draw_text_with_pil(
+        ctx, 
+        user_id, 
+        xp_bar_x + username_width + 3, 
+        username_y + (username_font_size - small_font_size)/2 + 3, 
+        default_pil_font, 
+        (180/255, 180/255, 180/255)
+    )
     
-    # Set up font for measuring text
-    ctx.select_font_face("Arial", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
-    ctx.set_font_size(rank_font_size)
-    
-    # Calculate dynamic positions based on text widths
+    # Set up values for rank and level
     # Use the passed rank if available, otherwise use default
     rank_value = rank if rank is not None else 44
     rank_text = f"#{rank_value}"
     level_text = str(level)
     
-    # Get text dimensions
-    rank_extents = ctx.text_extents(rank_text)
-    level_extents = ctx.text_extents(level_text)
+    # Get text dimensions using PIL
+    rank_width, _ = measure_text_size(rank_text, rank_pil_font)
+    level_width, _ = measure_text_size(level_text, rank_pil_font)
+    rank_label_width, _ = measure_text_size("RANK", default_pil_font)
+    level_label_width, _ = measure_text_size("LEVEL", default_pil_font)
     
     # Set dynamic padding
     min_padding = 5  # Minimum padding between elements
@@ -266,52 +454,59 @@ def _generate_level_card_cairo_sync(avatar_bytes, username, user_id, level, xp, 
     current_x = width - 20  # Start from right edge with padding
     
     # Position for level value (rightmost element)
-    level_value_x = current_x - level_extents.width
+    level_value_x = current_x - level_width
     current_x = level_value_x - min_padding
     
     # Position for "LEVEL" label
-    ctx.set_font_size(small_font_size)
-    level_label_extents = ctx.text_extents("LEVEL")
-    level_label_x = current_x - level_label_extents.width
+    level_label_x = current_x - level_label_width
     current_x = level_label_x - min_padding * 2  # Extra padding between sections
     
     # Position for rank value
-    ctx.set_font_size(rank_font_size)
-    rank_value_x = current_x - rank_extents.width
+    rank_value_x = current_x - rank_width
     current_x = rank_value_x - min_padding
     
     # Position for "RANK" label
-    ctx.set_font_size(small_font_size)
-    rank_label_extents = ctx.text_extents("RANK")
-    rank_label_x = current_x - rank_label_extents.width
+    rank_label_x = current_x - rank_label_width
     
-    # Draw RANK label
-    ctx.select_font_face("Arial", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL)
-    ctx.set_font_size(small_font_size)
-    ctx.set_source_rgb(180/255, 180/255, 180/255)  # Gray color
-    ctx.move_to(rank_label_x, 25 + small_font_size/2)
-    ctx.show_text("RANK")
+    # Draw RANK label - always in English
+    draw_text_with_pil(
+        ctx, 
+        "RANK", 
+        rank_label_x, 
+        1 + small_font_size/2, 
+        default_pil_font, 
+        (180/255, 180/255, 180/255)
+    )
     
-    # Draw rank value
-    ctx.select_font_face("Arial", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
-    ctx.set_font_size(rank_font_size)
-    ctx.set_source_rgb(1, 1, 1)  # White color
-    ctx.move_to(rank_value_x, 20 + rank_font_size/2)
-    ctx.show_text(rank_text)
+    # Draw rank value - always in English
+    draw_text_with_pil(
+        ctx, 
+        rank_text, 
+        rank_value_x, 
+        -15 + rank_font_size/2, 
+        rank_pil_font, 
+        (1, 1, 1)
+    )
     
-    # Draw LEVEL label
-    ctx.select_font_face("Arial", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL)
-    ctx.set_font_size(small_font_size)
-    ctx.set_source_rgb(180/255, 180/255, 180/255)  # Gray color
-    ctx.move_to(level_label_x, 25 + small_font_size/2)
-    ctx.show_text("LEVEL")
+    # Draw LEVEL label - always in English
+    draw_text_with_pil(
+        ctx, 
+        "LEVEL", 
+        level_label_x, 
+        1 + small_font_size/2, 
+        default_pil_font, 
+        (180/255, 180/255, 180/255)
+    )
     
-    # Draw level value
-    ctx.select_font_face("Arial", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
-    ctx.set_font_size(rank_font_size)
-    ctx.set_source_rgb(1, 1, 1)  # White color
-    ctx.move_to(level_value_x, 20 + rank_font_size/2)
-    ctx.show_text(level_text)
+    # Draw level value - always in English
+    draw_text_with_pil(
+        ctx, 
+        level_text, 
+        level_value_x, 
+        -15 + rank_font_size/2, 
+        rank_pil_font, 
+        (1, 1, 1)
+    )
     
     # Helper function to draw rounded rectangle
     def rounded_rectangle(ctx, x, y, width, height, radius):
@@ -347,18 +542,31 @@ def _generate_level_card_cairo_sync(avatar_bytes, username, user_id, level, xp, 
         rounded_rectangle(ctx, xp_bar_x, xp_bar_y, progress_width, xp_bar_height, xp_bar_height//2)
         ctx.fill()
     
-    # XP text
+    # XP text - always in English
     xp_text = f"{xp}/{xp_needed} XP"
-    ctx.select_font_face("Arial", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL)
-    ctx.set_font_size(small_font_size)
-    ctx.set_source_rgb(180/255, 180/255, 180/255)
+    xp_text_width, _ = measure_text_size(xp_text, default_pil_font)
     
-    # Calculate text width for proper positioning
-    text_extents = ctx.text_extents(xp_text)
-    text_width = text_extents.width
+    draw_text_with_pil(
+        ctx, 
+        xp_text, 
+        xp_bar_x + xp_bar_width - xp_text_width, 
+        xp_bar_y - 30, 
+        default_pil_font, 
+        (180/255, 180/255, 180/255)
+    )
     
-    ctx.move_to(xp_bar_x + xp_bar_width - text_width, xp_bar_y - 5)
-    ctx.show_text(xp_text)
+    # Add a subtle indicator for which script we detected (for debugging/testing)
+    if detected_script:
+        script_indicator = f"{detected_script}"
+        indicator_width, _ = measure_text_size(script_indicator, default_pil_font)
+        draw_text_with_pil(
+            ctx,
+            script_indicator,
+            width - indicator_width - 5,
+            height - 15,
+            default_pil_font,
+            (100/255, 100/255, 100/255)
+        )
     
     # Save to bytes
     image_bytes = io.BytesIO()
@@ -367,7 +575,6 @@ def _generate_level_card_cairo_sync(avatar_bytes, username, user_id, level, xp, 
     return image_bytes
 
 # Async wrapper for the Cairo level card generator
-# Replace the async wrapper for generate_level_card with this modified version
 async def generate_level_card(member, level, xp, xp_needed):
     """Download avatar, get background, and generate level card using Cairo"""
     # Get user's background if any
@@ -448,17 +655,30 @@ def _generate_leaderboard_cairo_sync(guild_name, member_data, rows, start_rank=1
     ctx.set_source_rgb(30/255, 30/255, 30/255)
     ctx.paint()
     
-    # Draw title
-    ctx.select_font_face("Arial", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
-    ctx.set_font_size(36)
-    ctx.set_source_rgb(1, 1, 1)  # White
+    # Create PIL fonts
+    title_font_size = 36
+    name_font_size = 27
+    level_font_size = 22
+    small_font_size = 18
     
+    # Use default font for title and labels
+    title_pil_font = ImageFont.truetype(FONT_PATHS['default'], title_font_size)
+    level_pil_font = ImageFont.truetype(FONT_PATHS['default'], level_font_size)
+    small_pil_font = ImageFont.truetype(FONT_PATHS['default'], small_font_size)
+    
+    # Draw title
     title_text = f"{guild_name} Leaderboard"
-    # Get text extents for centering
-    text_extents = ctx.text_extents(title_text)
-    title_x = (width - text_extents.width) / 2
-    ctx.move_to(title_x, 50)
-    ctx.show_text(title_text)
+    title_width, _ = measure_text_size(title_text, title_pil_font)
+    title_x = (width - title_width) / 2
+    
+    draw_text_with_pil(
+        ctx,
+        title_text,
+        title_x,
+        50 - title_font_size/2,
+        title_pil_font,
+        (1, 1, 1)  # White
+    )
     
     # Rank colors
     rank_colors = {
@@ -486,7 +706,7 @@ def _generate_leaderboard_cairo_sync(guild_name, member_data, rows, start_rank=1
         ctx.close_path()
     
     # Draw entries
-    y_offset = title_height
+    y_offset = title_height + 5
     avatar_size = 50
     text_x_offset = 120
     rect_radius = 20
@@ -540,7 +760,7 @@ def _generate_leaderboard_cairo_sync(guild_name, member_data, rows, start_rank=1
                 ctx.set_source_rgb(80/255, 80/255, 80/255)
                 ctx.fill()
         except Exception as e:
-            logging.error(f"Error processing avatar for leaderboard entry: {e}")
+            print(f"Error processing avatar for leaderboard entry: {e}")
             # Fallback to gray circle
             ctx.arc(avatar_position[0] + avatar_size//2, avatar_position[1] + avatar_size//2, 
                     avatar_size//2, 0, 2 * math.pi)
@@ -548,25 +768,95 @@ def _generate_leaderboard_cairo_sync(guild_name, member_data, rows, start_rank=1
             ctx.fill()
         
         # Draw rank with appropriate color
-        ctx.select_font_face("Arial", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
-        ctx.set_font_size(30)
-        
         rank_color = rank_colors.get(rank, (1, 1, 1))  # Default to white if not top 3
-        ctx.set_source_rgb(*rank_color)
-        
         rank_text = f"#{rank}"
-        ctx.move_to(text_x_offset, y_offset + 45)
-        ctx.show_text(rank_text)
         
-        # Get text width to know where to start the username
-        rank_text_extents = ctx.text_extents(rank_text)
+        # Create a PIL font for the rank
+        rank_pil_font = ImageFont.truetype(FONT_PATHS['default'], name_font_size)
         
-        # Draw username
-        ctx.set_source_rgb(1, 1, 1)  # White
-        user_text = f" | {username} | LVL: {level}"
-        ctx.move_to(text_x_offset + rank_text_extents.width, y_offset + 45)
-        ctx.show_text(user_text)
+        # Draw the rank
+        draw_text_with_pil(
+            ctx,
+            rank_text,
+            text_x_offset,
+            y_offset + 35 - name_font_size/2,
+            rank_pil_font,
+            rank_color
+        )
         
+        # Get rank text width for positioning the username
+        rank_text_width, _ = measure_text_size(rank_text, rank_pil_font)
+        username_x = text_x_offset + rank_text_width + 10  # Add some spacing
+        
+        # Detect script and create appropriate font for username
+        detected_script = detect_script(username)
+        username_font_path = FONT_PATHS['default']
+        is_rtl = False
+        
+        # Select appropriate font based on script
+        if detected_script:
+            if detected_script == "Arabic" or detected_script == "Hebrew":
+                is_rtl = True
+                if detected_script == "Arabic":
+                    username_font_path = FONT_PATHS['arabic']
+                else:  # Hebrew
+                    username_font_path = FONT_PATHS['hebrew']
+            elif detected_script == "CJK":
+                username_font_path = FONT_PATHS['cjk']
+            elif detected_script == "Cyrillic":
+                username_font_path = FONT_PATHS['cyrillic']
+            elif detected_script == "Devanagari":
+                username_font_path = FONT_PATHS['devanagari']
+            elif detected_script == "Thai":
+                username_font_path = FONT_PATHS['thai']
+            elif detected_script == "Baybayin":
+                username_font_path = FONT_PATHS['baybayin']
+        
+        # Process RTL text if needed
+        display_username = username
+        if is_rtl:
+            display_username = bidi.algorithm.get_display(username)
+        
+        # Create font for username with appropriate script support
+        username_pil_font = ImageFont.truetype(username_font_path, name_font_size)
+        
+        # Draw the username
+        draw_text_with_pil(
+            ctx,
+            display_username,
+            username_x,
+            y_offset + 35 - name_font_size/2,
+            username_pil_font,
+            (1, 1, 1)  # White
+        )
+        
+        # Get username width to position level info
+        username_width, _ = measure_text_size(display_username, username_pil_font)
+        
+        # Draw level text
+        level_text = f" | LVL: {level}"
+        draw_text_with_pil(
+            ctx,
+            level_text,
+            username_x + username_width,
+            y_offset + 35 - level_font_size/2,
+            level_pil_font,
+            (200/255, 200/255, 1)  # Light blue
+        )
+        
+        # Add script indicator for testing
+        script_text = f"Script: {detected_script or 'Latin'}"
+        script_width, _ = measure_text_size(script_text, small_pil_font)
+        draw_text_with_pil(
+            ctx,
+            script_text,
+            width - 50 - script_width,
+            y_offset + 65 - small_font_size/2,
+            small_pil_font,
+            (150/255, 150/255, 150/255)  # Light gray
+        )
+        
+        # Move to next entry
         y_offset += entry_height + entry_spacing
     
     # Save to bytes

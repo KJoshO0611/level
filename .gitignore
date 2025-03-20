@@ -12,3 +12,7 @@ database/
 modules/db.old.py
 .venv
 bot.log
+utils/image_generator.py
+utils/lbtest.py
+utils/test.py
+utils/hybrid_text_handler.py
