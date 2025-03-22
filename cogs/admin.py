@@ -1,9 +1,10 @@
 import discord
-from discord.ext import commands, tasks
-from discord import app_commands
+import time
 import logging
 from datetime import datetime
-import time
+from discord import app_commands
+from discord.ext import commands, tasks
+from utils.cairo_image_generator import get_text_rendering_stats
 from modules.databasev2 import (
     get_health_stats, 
     load_channel_boosts,
@@ -370,6 +371,26 @@ class AdminCommands(commands.Cog):
         
         await ctx.send(embed=embed)
 
+    # Then in your admin commands:
+    @commands.command(name="textstats", aliases=["ts"])
+    @commands.has_permissions(administrator=True)
+    async def text_stats(self, ctx):
+        """Display text rendering cache statistics"""
+        
+        
+        stats = get_text_rendering_stats()
+        
+        embed = discord.Embed(
+            title="Text Rendering Statistics",
+            color=discord.Color.blue()
+        )
+        
+        embed.add_field(name="Font Cache", value=f"{stats['font_cache_size']} fonts loaded", inline=True)
+        embed.add_field(name="Text Measurements", value=f"{stats['text_measure_cache_size']} entries", inline=True)
+        embed.add_field(name="Script Cache", value=f"{stats['script_cache_size']} usernames", inline=True)
+        
+        await ctx.send(embed=embed)
+        
     #slash command
     @app_commands.command(name="xpboost", description="Set an XP boost multiplier for a channel")
     @app_commands.describe(

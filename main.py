@@ -1,23 +1,30 @@
 import discord
-from discord.ext import commands
 import os
-import logging
-import signal
 import sys
+import time
+import signal
+import logging
+import asyncio
+import concurrent.futures
 from config import load_config
-from modules.databasev2 import init_db, close_db
-from modules.voice_activity import start_voice_tracking, handle_voice_state_update
-from cogs.leveling import LevelingCommands
+from discord.ext import commands
+from collections import OrderedDict
 from cogs.admin import AdminCommands
 from cogs.help import CustomHelpCommand
+from utils import cairo_image_generator
+from utils.image_templates import initialize_image_templates
+from cogs.leveling import LevelingCommands
+from utils.avatar_cache import avatar_cache
 from cogs.config_commands import ConfigCommands
 from cogs.card_customization import BackgroundCommands
 from utils.rate_limiter import RateLimiter, RateLimitExceeded
-from utils.background_api import BACKGROUNDS_DIR
-from utils.async_image_processor import start_image_processor
-from modules.voice_activity import handle_voice_state_update
-from modules.levels import handle_reaction_xp
 from modules.levels import handle_message_xp
+from modules.levels import handle_reaction_xp
+from modules.databasev2 import init_db, close_db
+from utils.background_api import BACKGROUNDS_DIR
+from modules.voice_activity import handle_voice_state_update
+from utils.async_image_processor import start_image_processor
+from modules.voice_activity import start_voice_tracking, handle_voice_state_update
 
 # Configure logging
 logging.basicConfig(
@@ -81,10 +88,19 @@ def setup_bot():
 def run_bot():
     # Load configuration
     config = load_config()
-    
+
     # Setup bot
     bot = setup_bot()
-    
+
+    # This keeps heavy image operations off the main event loop
+    image_thread_pool = concurrent.futures.ThreadPoolExecutor(
+        max_workers=2,  # Adjust based on your server's CPU cores
+        thread_name_prefix="img_"
+    )
+
+    # Make the thread pool available to the bot object
+    bot.image_thread_pool = image_thread_pool
+
     # Register event handlers
     @bot.event
     async def on_ready():
@@ -100,7 +116,16 @@ def run_bot():
         # Start the image processor
         await start_image_processor(bot)
         logging.info("Image processor started")
+
+        avatar_cache.start_cleanup_task(bot.loop)
+        logging.info(f"Avatar cache initialized (max size: {avatar_cache.max_size})")
         
+        bot.loop.run_in_executor(
+            bot.image_thread_pool, 
+            initialize_image_templates,
+            bot
+        )
+
         # Ensure background directory exists and is accessible
         if not os.path.exists(BACKGROUNDS_DIR):
             try:
@@ -143,7 +168,7 @@ def run_bot():
         await bot.process_commands(message)
 
         # Then handle XP for messages
-        await handle_message_xp(message)
+        await handle_message_xp(message, bot)
 
     @bot.event
     async def on_voice_state_update(member, before, after):
@@ -244,11 +269,58 @@ def run_bot():
             
     # Clean shutdown handler
     def signal_handler(sig, frame):
-        logging.info("Shutdown signal received. Cleaning up...")
-        # Schedule the coroutine to run in the event loop
-        import asyncio
-        asyncio.create_task(close_db())
-        logging.info("Cleanup complete. Exiting...")
+        async def cleanup():
+            # Log the cleanup start
+            logging.info("Executing graceful shutdown sequence...")
+            
+            # Cancel any running background tasks
+            for task in asyncio.all_tasks(asyncio.get_event_loop()):
+                if task != asyncio.current_task():
+                    task.cancel()
+            
+            # Close database connection
+            logging.info("Closing database connections...")
+            await close_db()
+            
+            # Shutdown image thread pool gracefully if it exists
+            if hasattr(bot, 'image_thread_pool'):
+                logging.info("Shutting down image thread pool...")
+                try:
+                    # Give pending tasks a chance to complete (timeout after 5 seconds)
+                    bot.image_thread_pool.shutdown(wait=True, timeout=5)
+                    logging.info("Image thread pool shut down successfully")
+                except Exception as e:
+                    logging.warning(f"Error during image thread pool shutdown: {e}")
+            
+            # Stop voice tracking if active
+            if hasattr(bot, 'voice_processor_running') and bot.voice_processor_running:
+                logging.info("Stopping voice tracking...")
+                bot.voice_processor_running = False
+            
+            # Close any open aiohttp sessions
+            if hasattr(bot, 'session') and not bot.session.closed:
+                logging.info("Closing HTTP sessions...")
+                await bot.session.close()
+            
+            # Log completion
+            logging.info("Cleanup process complete. Exiting gracefully.")
+        
+        try:
+            # Run the cleanup coroutine
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # If loop is running, create a task
+                asyncio.create_task(cleanup())
+                # Give cleanup tasks a moment to complete
+                time.sleep(2)
+            else:
+                # If loop is not running, run cleanup directly
+                loop.run_until_complete(cleanup())
+        except Exception as e:
+            logging.error(f"Error during shutdown cleanup: {e}")
+        
+        # Exit with success code
+        logging.info("Exiting now.")
         sys.exit(0)
         
     signal.signal(signal.SIGINT, signal_handler)

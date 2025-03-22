@@ -42,7 +42,7 @@ class LevelingCommands(commands.Cog):
                 
                 # Generate the image (this won't block the bot)
                 # This now uses the Cairo-based implementation but maintains the same interface
-                image_bytes = await generate_level_card(member, level_value, xp, next_level_xp)
+                image_bytes = await generate_level_card(member, level_value, xp, next_level_xp, bot=self.bot)
                 
                 # Update the message with the image
                 await update_with_image(message, image_bytes, "level_card")

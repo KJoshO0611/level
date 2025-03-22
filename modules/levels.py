@@ -146,13 +146,24 @@ async def send_level_up_notification(guild_id, member, level):
     """
     Sends a level-up notification to the configured channel.
     """
+    avatar_url = None
+    # Try to get server-specific (guild) avatar first
+    if hasattr(member, 'guild_avatar') and member.guild_avatar:
+        avatar_url = member.guild_avatar.url
+    # Then fall back to global avatar
+    elif member.avatar:
+        avatar_url = member.avatar.url
+    # Finally, use default avatar as last resort
+    else:
+        avatar_url = member.default_avatar.url
+
     embed = discord.Embed(
         title="Level Up!",
         description=f"Congratulations {member.mention}, you've reached level {level}!",
         color=discord.Color.gold()
     )
     # Set the author's avatar as the thumbnail
-    embed.set_thumbnail(url=member.avatar.url if member.avatar else member.default_avatar.url)
+    embed.set_thumbnail(url=avatar_url)
     
     # Check if a level-up channel is configured - use cached version
     level_up_channel_id = await get_level_up_channel(guild_id)
@@ -170,7 +181,7 @@ async def send_level_up_notification(guild_id, member, level):
         else:
             logging.info(f"No level-up channel configured and no system channel available for guild {guild_id}")
 
-async def handle_message_xp(message):
+async def handle_message_xp(message, bot=None):
     """Handle XP awarding for messages"""
     # Ignore messages from bots
     if message.author.bot:
@@ -187,7 +198,7 @@ async def handle_message_xp(message):
 
     # Check message rate limiting
     message_key = f"msg:{user_id}"
-    is_limited, _ = await message.bot.rate_limiters["command"].check_rate_limit(message_key)
+    is_limited, _ = await bot.rate_limiters["command"].check_rate_limit(message_key)
     
     if is_limited:
         # Skip XP award but don't tell the user (to avoid spam)
