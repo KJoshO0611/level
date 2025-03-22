@@ -136,7 +136,8 @@ async def _create_tables(bot):
             await conn.execute('''
                 CREATE TABLE IF NOT EXISTS server_config (
                     guild_id TEXT PRIMARY KEY,
-                    level_up_channel TEXT NOT NULL
+                    level_up_channel TEXT NOT NULL,
+                    event_channel TEXT
                 )
             ''')
 

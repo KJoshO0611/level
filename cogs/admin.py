@@ -1,5 +1,5 @@
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 from discord import app_commands
 import logging
 from datetime import datetime
@@ -14,6 +14,7 @@ from modules.databasev2 import (
     delete_xp_boost_event,
     get_xp_boost_event,
     delete_level_role,
+    get_level_up_channel,
     CHANNEL_XP_BOOSTS
 )
 
@@ -22,6 +23,160 @@ class AdminCommands(commands.Cog):
         self.bot = bot
         # Reference to the channel boosts dictionary in database.py
         self.channel_boosts = CHANNEL_XP_BOOSTS
+        self.bot.loop.create_task(self.start_event_announcer())
+    
+    def cog_unload(self):
+        """Called when the cog is unloaded"""
+        # Stop the background task when cog is unloaded
+        self.stop_event_announcer()
+
+    @tasks.loop(minutes=2)  # Check every 2 minutes
+    async def check_and_announce_events(self):
+        """Check for recently started events and announce them"""
+        try:
+            # Get all guilds the bot is in
+            for guild in self.bot.guilds:
+                guild_id = str(guild.id)
+                
+                # Get all active events for this guild - using the cached function
+                # This will use the cache if available and valid
+                active_events = await get_active_xp_boost_events(guild_id)
+                
+                # Also check upcoming events that might have just started
+                # Since the active_events cache might not be updated yet
+                upcoming_events = await get_upcoming_xp_boost_events(guild_id)
+                
+                current_time = time.time()
+                just_started_events = []
+                recently_started_threshold = 120  # 2 minutes
+                
+                # Check which active events have just started (within the last 2 minutes)
+                for event in active_events:
+                    if current_time - recently_started_threshold <= event["start_time"] <= current_time:
+                        just_started_events.append(event)
+                
+                # Also check if any upcoming events have just started but aren't in active_events yet
+                for event in upcoming_events:
+                    if current_time - recently_started_threshold <= event["start_time"] <= current_time:
+                        # Only add if not already in the list
+                        if not any(e["id"] == event["id"] for e in just_started_events):
+                            just_started_events.append(event)
+                
+                if just_started_events:
+                    # Try to find best channel to announce in
+                    # First check for a dedicated event announcement channel
+                    announce_channel = None
+                    
+                    # Get dedicated event channel if set
+                    async with self.bot.db.acquire() as conn:
+                        query = "SELECT event_channel FROM server_config WHERE guild_id = $1"
+                        row = await conn.fetchrow(query, guild_id)
+                        
+                        if row and row['event_channel']:
+                            event_channel_id = row['event_channel']
+                            announce_channel = guild.get_channel(int(event_channel_id))
+                    
+                    # If no event channel, fall back to level-up channel
+                    if not announce_channel:
+                        level_up_channel_id = await get_level_up_channel(guild_id)
+                        if level_up_channel_id:
+                            announce_channel = guild.get_channel(int(level_up_channel_id))
+                    
+                    # If no level-up channel, try system channel
+                    if not announce_channel and guild.system_channel:
+                        announce_channel = guild.system_channel
+                    
+                    # If still no channel, try to find a general channel
+                    if not announce_channel:
+                        for channel in guild.text_channels:
+                            if channel.permissions_for(guild.me).send_messages:
+                                if channel.name.lower() in ["general", "main", "chat", "lobby", "lounge"]:
+                                    announce_channel = channel
+                                    break
+                    
+                    # Announce each event that just started
+                    if announce_channel:
+                        for event in just_started_events:
+                            # Create an embed for the announcement
+                            embed = discord.Embed(
+                                title="🎉 XP Boost Event Started! 🎉",
+                                description=f"**{event['name']}** is now active!",
+                                color=discord.Color.gold()
+                            )
+                            
+                            # Format timestamps
+                            end_timestamp = int(event["end_time"])
+                            end_discord_time = f"<t:{end_timestamp}:F>"
+                            relative_end_time = f"<t:{end_timestamp}:R>"
+                            
+                            # Add event details
+                            embed.add_field(name="Boost", value=f"**{event['multiplier']}x** XP multiplier", inline=True)
+                            
+                            # Calculate duration in hours
+                            duration_hours = (event["end_time"] - event["start_time"]) / 3600
+                            embed.add_field(name="Duration", value=f"{duration_hours:.1f} hours", inline=True)
+                            
+                            embed.add_field(name="Ends", value=f"{end_discord_time}\n({relative_end_time})", inline=False)
+                            
+                            # Add a footer with event ID
+                            embed.set_footer(text=f"Event #{event['id']}")
+                            
+                            try:
+                                await announce_channel.send(embed=embed)
+                                logging.info(f"Announced event #{event['id']} in {guild.name}")
+                            except Exception as e:
+                                logging.error(f"Failed to announce event in {guild.name}: {e}")
+                    else:
+                        logging.warning(f"No suitable channel found to announce event in {guild.name}")
+                        
+        except Exception as e:
+            logging.error(f"Error in check_and_announce_events: {e}")
+
+    @check_and_announce_events.before_loop
+    async def before_event_check(self):
+        """Wait until the bot is ready before starting the task"""
+        await self.bot.wait_until_ready()
+
+    async def start_event_announcer(self):
+        """Start the XP event announcement background task"""
+        self.check_and_announce_events.start()
+        logging.info("Started XP event announcement background task")
+
+    def stop_event_announcer(self):
+        """Stop the XP event announcement background task"""
+        if self.check_and_announce_events.is_running():
+            self.check_and_announce_events.cancel()
+            logging.info("Stopped XP event announcement background task")
+
+    @app_commands.command(name="seteventchannel", description="Set the channel for XP event announcements")
+    @app_commands.describe(channel="The channel where XP event announcements will be sent")
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def set_event_channel(self, interaction: discord.Interaction, channel: discord.TextChannel):
+        """Set the channel for XP event announcements using slash command"""
+        guild_id = str(interaction.guild.id)
+        channel_id = str(channel.id)
+        
+        # Reuse the level-up channel setting in database, but with a different key
+        async with self.bot.db.acquire() as conn:
+            query = """
+            UPDATE server_config 
+            SET event_channel = $1
+            WHERE guild_id = $2
+            """
+            rows_affected = await conn.execute(query, channel_id, guild_id)
+            
+            # If server_config entry doesn't exist for this guild yet, create it
+            if rows_affected == "0":
+                query = """
+                INSERT INTO server_config (guild_id, level_up_channel, event_channel)
+                VALUES ($1, '', $2)
+                """
+                await conn.execute(query, guild_id, channel_id)
+        
+        await interaction.response.send_message(
+            f"✅ XP event announcements will now be sent to {channel.mention}",
+            ephemeral=True
+        )
 
     @commands.command(name="list_channel_boosts", aliases=["lcboost"])
     async def list_channel_boosts(self, ctx):
@@ -317,8 +472,10 @@ class AdminCommands(commands.Cog):
         name="Event name",
         multiplier="XP multiplier (e.g., 1.5 for 50% more XP)",
         duration_hours="How long the event will last in hours",
-        days_from_now="Days until event starts",
-        hours_from_now="Hours until event starts"
+        start_date="Start date in YYYY-MM-DD format (e.g., 2025-04-15)",
+        start_time="Start time in 24-hour format HH:MM (e.g., 18:30)",
+        days_from_now="Days until event starts (ignored if start_date is provided)",
+        hours_from_now="Hours until event starts (ignored if start_date is provided)"
     )
     @app_commands.checks.has_permissions(administrator=True)
     async def schedule_event(
@@ -327,38 +484,74 @@ class AdminCommands(commands.Cog):
         name: str,
         multiplier: float,
         duration_hours: float,
+        start_date: str = None,
+        start_time: str = None,
         days_from_now: float = 0.0,
         hours_from_now: float = 0.0
     ):
-        """Schedule a future XP boost event"""
+        """Schedule a future XP boost event with option for specific date and time"""
         if multiplier < 1.0 or multiplier > 5.0:
             return await interaction.response.send_message("⚠️ Multiplier must be between 1.0 and 5.0", ephemeral=True)
         
         if duration_hours <= 0 or duration_hours > 168:  # Max 1 week
             return await interaction.response.send_message("⚠️ Duration must be between 0 and 168 hours (1 week)", ephemeral=True)
         
-        if days_from_now < 0 or hours_from_now < 0:
-            return await interaction.response.send_message("⚠️ Start time cannot be in the past", ephemeral=True)
+        # Determine start time based on provided parameters
+        current_time = time.time()
+        start_timestamp = None
         
-        if days_from_now == 0 and hours_from_now < 1:
-            return await interaction.response.send_message("⚠️ Event must be scheduled at least 1 hour in advance", ephemeral=True)
+        # If specific date/time is provided, use it
+        if start_date:
+            try:
+                # Parse date and optionally time
+                from datetime import datetime
+                
+                # Default time to midnight if not provided
+                if not start_time:
+                    start_time = "00:00"
+                    
+                # Parse the date and time string into a datetime object
+                dt_str = f"{start_date} {start_time}"
+                event_dt = datetime.strptime(dt_str, "%Y-%m-%d %H:%M")
+                
+                # Convert to timestamp
+                start_timestamp = event_dt.timestamp()
+                
+                # Ensure event is in the future
+                if start_timestamp <= current_time:
+                    return await interaction.response.send_message("⚠️ Event start time must be in the future", ephemeral=True)
+                
+                # Ensure event is at least 10 minutes in the future to avoid immediate starts
+                if start_timestamp < current_time + 600:  # 600 seconds = 10 minutes
+                    return await interaction.response.send_message("⚠️ Event must be scheduled at least 10 minutes in advance", ephemeral=True)
+                    
+            except ValueError as e:
+                return await interaction.response.send_message(f"⚠️ Invalid date or time format: {str(e)}", ephemeral=True)
+        else:
+            # Use relative time if specific date not provided
+            if days_from_now < 0 or hours_from_now < 0:
+                return await interaction.response.send_message("⚠️ Start time cannot be in the past", ephemeral=True)
+            
+            if days_from_now == 0 and hours_from_now < 1:
+                return await interaction.response.send_message("⚠️ Event must be scheduled at least 1 hour in advance", ephemeral=True)
+            
+            start_offset = (days_from_now * 86400) + (hours_from_now * 3600)  # Convert to seconds
+            start_timestamp = current_time + start_offset
         
+        # Calculate end time
+        end_timestamp = start_timestamp + (duration_hours * 3600)
         guild_id = str(interaction.guild.id)
-        start_offset = (days_from_now * 86400) + (hours_from_now * 3600)  # Convert to seconds
-        
-        start_time = time.time() + start_offset
-        end_time = start_time + (duration_hours * 3600)
         created_by = str(interaction.user.id)
         
         # Create the event
         event_id = await create_xp_boost_event(
-            guild_id, name, multiplier, start_time, end_time, created_by
+            guild_id, name, multiplier, start_timestamp, end_timestamp, created_by
         )
         
         if event_id:
             # Convert timestamps to integers for Discord timestamp formatting
-            start_timestamp = int(start_time)
-            end_timestamp = int(end_time)
+            start_timestamp = int(start_timestamp)
+            end_timestamp = int(end_timestamp)
             
             # Format Discord timestamps (shows in user's local timezone)
             # f, F = full date/time format, R = relative time format (e.g., "in 2 days")
