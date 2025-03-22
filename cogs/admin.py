@@ -289,9 +289,13 @@ class AdminCommands(commands.Cog):
         )
         
         if event_id:
-            # Format times for display
-            start_dt = datetime.fromtimestamp(start_time)
-            end_dt = datetime.fromtimestamp(end_time)
+            # Format Discord timestamps
+            start_timestamp = int(start_time)
+            end_timestamp = int(end_time)
+            
+            start_discord_time = f"<t:{start_timestamp}:F>"
+            end_discord_time = f"<t:{end_timestamp}:F>"
+            relative_end_time = f"<t:{end_timestamp}:R>"
             
             embed = discord.Embed(
                 title="XP Boost Event Created",
@@ -302,7 +306,7 @@ class AdminCommands(commands.Cog):
             embed.add_field(name="Multiplier", value=f"{multiplier}x XP", inline=True)
             embed.add_field(name="Duration", value=f"{duration_hours} hours", inline=True)
             embed.add_field(name="Event ID", value=f"#{event_id}", inline=True)
-            embed.add_field(name="Timeframe", value=f"From: {start_dt.strftime('%Y-%m-%d %H:%M')}\nTo: {end_dt.strftime('%Y-%m-%d %H:%M')}", inline=False)
+            embed.add_field(name="Timeframe", value=f"From: {start_discord_time}\nTo: {end_discord_time}\nEnds: {relative_end_time}", inline=False)
             
             await interaction.response.send_message(embed=embed)
         else:
@@ -352,9 +356,15 @@ class AdminCommands(commands.Cog):
         )
         
         if event_id:
-            # Format times for display
-            start_dt = datetime.fromtimestamp(start_time)
-            end_dt = datetime.fromtimestamp(end_time)
+            # Convert timestamps to integers for Discord timestamp formatting
+            start_timestamp = int(start_time)
+            end_timestamp = int(end_time)
+            
+            # Format Discord timestamps (shows in user's local timezone)
+            # f, F = full date/time format, R = relative time format (e.g., "in 2 days")
+            start_discord_time = f"<t:{start_timestamp}:F>"
+            end_discord_time = f"<t:{end_timestamp}:F>"
+            relative_start_time = f"<t:{start_timestamp}:R>"
             
             embed = discord.Embed(
                 title="XP Boost Event Scheduled",
@@ -365,8 +375,8 @@ class AdminCommands(commands.Cog):
             embed.add_field(name="Multiplier", value=f"{multiplier}x XP", inline=True)
             embed.add_field(name="Duration", value=f"{duration_hours} hours", inline=True)
             embed.add_field(name="Event ID", value=f"#{event_id}", inline=True)
-            embed.add_field(name="Starts In", value=f"{int(days_from_now)} days and {int(hours_from_now)} hours", inline=False)
-            embed.add_field(name="Timeframe", value=f"From: {start_dt.strftime('%Y-%m-%d %H:%M')}\nTo: {end_dt.strftime('%Y-%m-%d %H:%M')}", inline=False)
+            embed.add_field(name="Starts", value=f"{relative_start_time}", inline=False)
+            embed.add_field(name="Timeframe", value=f"From: {start_discord_time}\nTo: {end_discord_time}", inline=False)
             
             await interaction.response.send_message(embed=embed)
         else:
@@ -398,9 +408,11 @@ class AdminCommands(commands.Cog):
             else:
                 time_left = f"{hours_remaining:.1f} hours"
             
-            # Format values
-            start_dt = datetime.fromtimestamp(event["start_time"])
-            end_dt = datetime.fromtimestamp(event["end_time"])
+            # Format Discord timestamps
+            end_timestamp = int(event["end_time"])
+            end_discord_time = f"<t:{end_timestamp}:F>"
+            relative_end_time = f"<t:{end_timestamp}:R>"
+            
             creator = interaction.guild.get_member(int(event["created_by"]))
             creator_name = creator.display_name if creator else "Unknown"
             
@@ -408,8 +420,8 @@ class AdminCommands(commands.Cog):
             embed.add_field(
                 name=f"#{event['id']}: {event['name']}",
                 value=f"Multiplier: **{event['multiplier']}x**\n"
-                    f"Ends: {end_dt.strftime('%Y-%m-%d %H:%M')}\n"
-                    f"Time left: **{time_left}**\n"
+                    f"Ends: {end_discord_time}\n"
+                    f"Time left: {relative_end_time}\n"
                     f"Created by: {creator_name}",
                 inline=False
             )
@@ -433,22 +445,16 @@ class AdminCommands(commands.Cog):
         )
         
         for event in upcoming_events:
-            # Calculate time until start
-            until_start = event["start_time"] - time.time()
-            hours_until = until_start / 3600
+            # Format Discord timestamps
+            start_timestamp = int(event["start_time"])
+            end_timestamp = int(event["end_time"])
             
-            if hours_until < 1:
-                time_until = f"{int(until_start / 60)} minutes"
-            elif hours_until < 24:
-                time_until = f"{hours_until:.1f} hours"
-            else:
-                days_until = hours_until / 24
-                time_until = f"{days_until:.1f} days"
+            start_discord_time = f"<t:{start_timestamp}:F>"
+            relative_start_time = f"<t:{start_timestamp}:R>"
             
-            # Format values
-            start_dt = datetime.fromtimestamp(event["start_time"])
-            end_dt = datetime.fromtimestamp(event["end_time"])
+            # Calculate duration
             duration_hours = (event["end_time"] - event["start_time"]) / 3600
+            
             creator = interaction.guild.get_member(int(event["created_by"]))
             creator_name = creator.display_name if creator else "Unknown"
             
@@ -456,8 +462,8 @@ class AdminCommands(commands.Cog):
             embed.add_field(
                 name=f"#{event['id']}: {event['name']}",
                 value=f"Multiplier: **{event['multiplier']}x**\n"
-                    f"Starts in: **{time_until}**\n"
-                    f"Start: {start_dt.strftime('%Y-%m-%d %H:%M')}\n"
+                    f"Starts: {relative_start_time}\n"
+                    f"Start time: {start_discord_time}\n"
                     f"Duration: {duration_hours:.1f} hours\n"
                     f"Created by: {creator_name}",
                 inline=False
