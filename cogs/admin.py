@@ -370,48 +370,48 @@ class AdminCommands(commands.Cog):
         
         await ctx.send(embed=embed)
 
-        #slash command
-        @app_commands.command(name="xpboost", description="Set an XP boost multiplier for a channel")
-        @app_commands.describe(
-            channel="The channel to apply the XP boost to",
-            multiplier="The XP multiplier (0.1-5.0)"
-        )
-        @app_commands.checks.has_permissions(administrator=True)
-        async def xp_boost(
-            self, 
-            interaction: discord.Interaction, 
-            channel: discord.abc.GuildChannel,
-            multiplier: float
-        ):
-            """Set an XP boost for a specific channel"""
-            # Validate the channel type
-            if not isinstance(channel, (discord.VoiceChannel, discord.TextChannel)):
-                await interaction.response.send_message(
-                    "⚠️ XP boosts can only be applied to text or voice channels.",
-                    ephemeral=True
-                )
-                return
-            
-            # Validate the multiplier
-            if multiplier < 0.1 or multiplier > 5.0:
-                await interaction.response.send_message(
-                    "⚠️ Boost multiplier must be between 0.1 and 5.0",
-                    ephemeral=True
-                )
-                return
-            
-            # Set the boost
-            guild_id = str(interaction.guild.id)
-            channel_id = str(channel.id)
-            await set_channel_boost_db(guild_id, channel_id, multiplier)
-            
-            channel_type = "voice" if isinstance(channel, discord.VoiceChannel) else "text"
+    #slash command
+    @app_commands.command(name="xpboost", description="Set an XP boost multiplier for a channel")
+    @app_commands.describe(
+        channel="The channel to apply the XP boost to",
+        multiplier="The XP multiplier (0.1-5.0)"
+    )
+    @app_commands.checks.has_permissions(administrator=True)
+    async def xp_boost(
+        self, 
+        interaction: discord.Interaction, 
+        channel: discord.abc.GuildChannel,
+        multiplier: float
+    ):
+        """Set an XP boost for a specific channel"""
+        # Validate the channel type
+        if not isinstance(channel, (discord.VoiceChannel, discord.TextChannel)):
             await interaction.response.send_message(
-                f"✅ Set XP boost for {channel_type} channel '{channel.name}' to {multiplier}x",
+                "⚠️ XP boosts can only be applied to text or voice channels.",
                 ephemeral=True
             )
+            return
+            
+        # Validate the multiplier
+        if multiplier < 0.1 or multiplier > 5.0:
+            await interaction.response.send_message(
+                "⚠️ Boost multiplier must be between 0.1 and 5.0",
+                ephemeral=True
+            )
+            return
+            
+        # Set the boost
+        guild_id = str(interaction.guild.id)
+        channel_id = str(channel.id)
+        await set_channel_boost_db(guild_id, channel_id, multiplier)
+            
+        channel_type = "voice" if isinstance(channel, discord.VoiceChannel) else "text"
+        await interaction.response.send_message(
+            f"✅ Set XP boost for {channel_type} channel '{channel.name}' to {multiplier}x",
+            ephemeral=True
+        )
 
-        # New event-related slash commands
+    # New event-related slash commands
     @app_commands.command(name="createevent", description="Create a temporary XP boost event")
     @app_commands.describe(
         name="Event name",
