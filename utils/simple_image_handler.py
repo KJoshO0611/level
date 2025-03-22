@@ -19,6 +19,22 @@ async def generate_image_nonblocking(ctx, image_type="image"):
         - message: The loading message that will be updated with the image
         - completion_event: An asyncio event to signal when ready to update
     """
+    # Apply rate limiting
+    user_id = str(ctx.author.id)
+    guild_id = str(ctx.guild.id) if ctx.guild else "DM"
+
+    # Check user rate limit
+    is_limited, wait_time = await ctx.bot.rate_limiters["image"].check_rate_limit(user_id)
+    if is_limited:
+        await ctx.send(f"⏱️ Image generation limit reached. Please wait {wait_time} seconds.", delete_after=10)
+        return None, None
+    
+    # Check guild rate limit (10 images per minute per guild)
+    is_guild_limited, guild_wait = await ctx.bot.rate_limiters["guild"].check_rate_limit(f"img:{guild_id}")
+    if is_guild_limited:
+        await ctx.send("⚠️ This server has reached its image generation limit. Please try again later.", delete_after=10)
+        return None, None    
+
     # Create and send a loading message
     message = await ctx.send(f"🔄 Generating {image_type}... This may take a moment.")
     

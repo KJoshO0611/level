@@ -185,6 +185,14 @@ async def handle_message_xp(message):
     channel_id = str(message.channel.id)
     current_time = time.time()
 
+    # Check message rate limiting
+    message_key = f"msg:{user_id}"
+    is_limited, _ = await message.bot.rate_limiters["command"].check_rate_limit(message_key)
+    
+    if is_limited:
+        # Skip XP award but don't tell the user (to avoid spam)
+        return    
+
     # Get or create user level - use cached version
     xp, level, last_xp_time, last_role = await get_or_create_user_level(guild_id, user_id)
 

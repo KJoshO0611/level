@@ -6,12 +6,14 @@ from modules.databasev2 import get_leaderboard, get_user_levels, get_user_rank
 from utils.cairo_image_generator import generate_level_card, generate_leaderboard_image
 from utils.simple_image_handler import generate_image_nonblocking, update_with_image
 import logging
+from utils.rate_limiter import rate_limit, guild_key, user_key
 
 class LevelingCommands(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
     @commands.command(name="level", aliases=["lvl"])
+    @rate_limit(calls=5, period=60)  # 5 calls per minute per user
     async def level(self, ctx, member: discord.Member = None):
         """Check the level and XP of a member with a visual card."""
         await ctx.message.delete()
@@ -50,6 +52,7 @@ class LevelingCommands(commands.Cog):
             await ctx.send("An error occurred while fetching level data.")
 
     @commands.command(name="leaderboard", aliases=["lb"])
+    @rate_limit(calls=2, period=30, key_func=guild_key)  # 2 calls per 30 seconds per guild
     async def leaderboard(self, ctx, page: int = 1):
         """Display the top 10 users in this server based on their level and XP."""
         await ctx.message.delete()
@@ -83,6 +86,7 @@ class LevelingCommands(commands.Cog):
             await ctx.send("An error occurred while fetching leaderboard data.")
             
     @commands.command(name="rank", aliases=["r"])
+    @rate_limit(calls=5, period=60)  # 5 calls per minute per user
     async def rank(self, ctx, member: discord.Member = None):
         """Check your rank in the server leaderboard."""
         member = member or ctx.author

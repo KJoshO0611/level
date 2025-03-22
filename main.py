@@ -2,6 +2,8 @@ import discord
 from discord.ext import commands
 import os
 import logging
+import signal
+import sys
 from config import load_config
 from modules.databasev2 import init_db, close_db
 from modules.voice_activity import start_voice_tracking, handle_voice_state_update
@@ -10,6 +12,12 @@ from cogs.admin import AdminCommands
 from cogs.help import CustomHelpCommand
 from cogs.config_commands import ConfigCommands
 from cogs.card_customization import BackgroundCommands
+from utils.rate_limiter import RateLimiter, RateLimitExceeded
+from utils.background_api import BACKGROUNDS_DIR
+from utils.async_image_processor import start_image_processor
+from modules.voice_activity import handle_voice_state_update
+from modules.levels import handle_reaction_xp
+from modules.levels import handle_message_xp
 
 # Configure logging
 logging.basicConfig(
@@ -56,6 +64,16 @@ def setup_bot():
 
     # Make this method accessible
     bot.setup_cogs = setup_cogs
+
+    # Add rate limiters for different subsystems
+    bot.rate_limiters = {
+        "image": RateLimiter(max_calls=5, period=60, name="image_generation"),  # 5 images per minute per user
+        "voice_xp": RateLimiter(max_calls=10, period=60, name="voice_xp"),      # 10 voice XP awards per minute per user
+        "command": RateLimiter(max_calls=30, period=60, name="general_commands"), # 30 commands per minute per user
+        "leaderboard": RateLimiter(max_calls=2, period=30, name="leaderboard"),   # 2 leaderboard commands per 30 sec
+        "guild": RateLimiter(max_calls=200, period=60, name="guild_commands"),    # 200 commands per minute per guild
+        "global": RateLimiter(max_calls=1000, period=60, name="global")           # 1000 total commands per minute
+    }
     
     return bot
 
@@ -80,12 +98,10 @@ def run_bot():
         await start_voice_tracking(bot)
         
         # Start the image processor
-        from utils.async_image_processor import start_image_processor
         await start_image_processor(bot)
         logging.info("Image processor started")
         
         # Ensure background directory exists and is accessible
-        from utils.background_api import BACKGROUNDS_DIR
         if not os.path.exists(BACKGROUNDS_DIR):
             try:
                 os.makedirs(BACKGROUNDS_DIR, exist_ok=True)
@@ -93,21 +109,45 @@ def run_bot():
             except Exception as e:
                 logging.error(f"Failed to create backgrounds directory: {e}")
         
+        # Start rate limiter cleanup tasks
+        for limiter in bot.rate_limiters.values():
+            limiter.start_cleanup_task(bot)
+        logging.info("Rate limiters initialized")
+        
         await bot.setup_cogs()
         await bot.tree.sync()
         logging.info(f"Bot is ready in {len(bot.guilds)} guilds")
 
     @bot.event
     async def on_message(message):
+        # Don't respond to bots
+        if message.author.bot:
+            return
+        
+        # Global rate limiting check
+        is_global_limited, _ = await bot.rate_limiters["global"].check_rate_limit("commands")
+        
+        if is_global_limited:
+            # If we're globally rate limited, only process certain critical commands
+            # Parse the command so we can check its name
+            ctx = await bot.get_context(message)
+            
+            if ctx.valid and ctx.command:
+                # Allow certain critical commands even during global rate limiting
+                critical_commands = ['help', 'dbstatus', 'ping', 'info']
+                if ctx.command.name not in critical_commands:
+                    # Silently ignore non-critical commands during global rate limiting
+                    return
+                
         # Process commands first
         await bot.process_commands(message)
+
         # Then handle XP for messages
-        from modules.levels import handle_message_xp
         await handle_message_xp(message)
 
     @bot.event
     async def on_voice_state_update(member, before, after):
-        from modules.voice_activity import handle_voice_state_update
+        
         logging.info(f"Voice state update: {member.name} moved from {before.channel} to {after.channel}")
         await handle_voice_state_update(bot, member, before, after)
 
@@ -124,8 +164,6 @@ def run_bot():
         
         # Add to processed reactions set
         bot.processed_reactions.add(reaction_id)
-
-        from modules.levels import handle_reaction_xp
         await handle_reaction_xp(reaction, user)
         logging.info(f"Reaction XP processed for {user.name}")
     
@@ -160,7 +198,6 @@ def run_bot():
             # Get the reaction from the message
             for reaction in message.reactions:
                 if str(reaction.emoji) == str(payload.emoji):
-                    from modules.levels import handle_reaction_xp
                     await handle_reaction_xp(reaction, user)
                     logging.info(f"Raw reaction XP processed for {user.name}")
                     break
@@ -181,11 +218,31 @@ def run_bot():
     @bot.event
     async def on_error(event, *args, **kwargs):
         logging.error(f"Error in event {event}", exc_info=True)
-    
+        
+    @bot.event
+    async def on_command_error(ctx, error):
+        # Handle rate limit errors
+        if isinstance(error, commands.CommandInvokeError) and isinstance(error.original, RateLimitExceeded):
+            # Error is already handled in the decorator by sending a message
+            return
+        
+        # Handle other errors
+        if isinstance(error, commands.CommandNotFound):
+            return  # Silently ignore unknown commands
+        elif isinstance(error, commands.MissingRequiredArgument):
+            await ctx.send(f"⚠️ Missing required argument: {error.param.name}")
+        elif isinstance(error, commands.BadArgument):
+            await ctx.send(f"⚠️ Invalid argument: {str(error)}")
+        elif isinstance(error, commands.MissingPermissions):
+            await ctx.send(f"❌ You don't have permission to use this command.")
+        elif isinstance(error, commands.BotMissingPermissions):
+            await ctx.send(f"❌ I don't have the necessary permissions to execute this command.")
+        else:
+            # Log unexpected errors
+            logging.error(f"Command error: {error}", exc_info=error)
+            await ctx.send("❌ An error occurred while processing your command.")
+            
     # Clean shutdown handler
-    import signal
-    import sys
-    
     def signal_handler(sig, frame):
         logging.info("Shutdown signal received. Cleaning up...")
         # Schedule the coroutine to run in the event loop

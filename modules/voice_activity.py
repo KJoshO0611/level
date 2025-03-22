@@ -197,6 +197,14 @@ async def handle_voice_state_update(bot, member, before, after):
     
     # User joins a voice channel
     if after.channel and not before.channel:
+
+        voice_action_key = f"voice_join:{user_id}"
+        is_limited, _ = await bot.rate_limiters["voice_xp"].check_rate_limit(voice_action_key)
+        
+        if is_limited:
+            # Still track but log the rate limit
+            logging.info(f"Rate limited voice join for user {user_id}")
+            
         vc_timers[user_id] = time.time()
         
         # Store the channel id
