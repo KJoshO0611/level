@@ -29,7 +29,7 @@ def _is_template_cached(year, month):
 
 def _generate_event_calendar_cairo_sync(guild_name, year, month, events, language="en"):
     """
-    Generate a visual calendar for a specific month showing XP events
+    Generate a visual calendar for a specific month showing XP events with dynamic row heights
     
     This function uses template caching to improve performance for repeatedly
     generated calendars. It caches base templates for each month/year combination
@@ -50,147 +50,58 @@ def _generate_event_calendar_cairo_sync(guild_name, year, month, events, languag
     Returns:
     - BytesIO: The generated calendar image
     """
+    # For reference to fix variables
+    cal = calendar.month_name[month] + " " + str(year)
+    # Layout parameters for compact layout with dynamic row heights
+    layout_params = {
+        "width": 900,                   # Image width in pixels
+        "margin": 30,                   # Margin around edges
+        "header_height": 80,            # Height of the header section
+        "footer_height": 60,            # Height of the footer section
+        "day_header_height": 30,        # Height for weekday headers
+        "title_font_size": 32,          # Font size for month/year title
+        "subtitle_font_size": 18,       # Font size for subtitle (guild name)
+        "weekday_font_size": 18,        # Font size for weekday names
+        "day_font_size": 16,            # Font size for day numbers
+        "event_font_size": 12,          # Font size for event text
+        "legend_font_size": 14,         # Font size for legend text
+        "event_height": 18,             # Height for each event indicator (compact)
+        "event_spacing": 1,             # Space between events (compact)
+        "day_number_padding": 8,        # Padding from edge to day number
+        "day_number_top_padding": 8,    # Padding from top of cell to day number
+        "event_start_y_offset": 35,     # How far below the top of cell events start
+        "min_row_height": 80,           # Minimum height per row
+        "max_row_height": 250,          # Maximum height per row
+        "min_calendar_height": 600,     # Minimum total calendar height
+        "max_calendar_height": 1200,    # Maximum total calendar height
+        # Colors (R, G, B values, each between 0-1)
+        "bg_color": (40/255, 40/255, 45/255),           # Background color
+        "grid_color": (70/255, 70/255, 75/255),         # Grid line color
+        "text_color": (225/255, 225/255, 225/255),      # Default text color
+        "today_bg_color": (70/255, 70/255, 90/255),     # Today's highlight color
+        "weekend_bg_color": (50/255, 50/255, 55/255),   # Weekend cell color
+    }
+    
+    # Use the layout parameters
+    p = layout_params
+    
     # Check if we have a cached template for this month/year
     has_cached_template = _is_template_cached(year, month)
-    # Calendar dimensions and settings
-    width = 900
-    height = 720
-    margin = 30
-    header_height = 80
-    footer_height = 60
-    
-    # Colors
-    bg_color = (40/255, 40/255, 45/255)  # Dark background
-    grid_color = (70/255, 70/255, 75/255)  # Slightly lighter grid lines
-    text_color = (225/255, 225/255, 225/255)  # Off-white text
-    today_bg_color = (70/255, 70/255, 90/255)  # Highlight for today
-    weekend_bg_color = (50/255, 50/255, 55/255)  # Slightly darker for weekends
     
     # Event colors based on multiplier (from cooler to warmer colors)
     event_colors = {
         1.0: (0.2, 0.4, 0.6),  # Blue - lowest
-        1.5: (0.2, 0.5, 0.2),  # Green
-        2.0: (0.5, 0.5, 0.1),  # Yellow
-        2.5: (0.6, 0.3, 0.1),  # Orange
-        3.0: (0.7, 0.1, 0.1),  # Red - highest
+        2.0: (0.2, 0.5, 0.2),  # Green
+        3.0: (0.5, 0.5, 0.1),  # Yellow
+        4.0: (0.6, 0.3, 0.1),  # Orange
+        5.0: (0.7, 0.1, 0.1),  # Red - highest
     }
     
-    # Font sizes
-    title_font_size = 32
-    weekday_font_size = 18
-    day_font_size = 16
-    event_font_size = 14
-    
-    # If we have a cached template, use it as the base
-    if has_cached_template:
-        logging.info(f"Using cached calendar template for {month}/{year}")
-        # Create a new surface from the cached template file
-        try:
-            # Load the template as a new surface
-            template_path = _get_calendar_template_path(year, month)
-            template_surface = cairo.ImageSurface.create_from_png(template_path)
-            
-            # Create our working surface
-            surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, width, height)
-            ctx = cairo.Context(surface)
-            
-            # Draw the template onto our surface
-            ctx.set_source_surface(template_surface, 0, 0)
-            ctx.paint()
-            
-            # Clean up the template surface
-            del template_surface
-        except Exception as e:
-            logging.error(f"Error loading cached template: {e}")
-            # Fall back to creating from scratch
-            surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, width, height)
-            ctx = cairo.Context(surface)
-            ctx.set_source_rgb(*bg_color)
-            ctx.rectangle(0, 0, width, height)
-            ctx.fill()
-            has_cached_template = False  # Reset so we rebuild everything
-    else:
-        # Fill background and create from scratch
-        logging.info(f"No cached template for {month}/{year}, creating new")
-        surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, width, height)
-        ctx = cairo.Context(surface)
-        ctx.set_source_rgb(*bg_color)
-        ctx.rectangle(0, 0, width, height)
-        ctx.fill()
-    
-    # Draw calendar title (Month Year) - only if we don't have a cached template
-    cal = calendar.month_name[month] + " " + str(year)
-    title_font = get_font(None, title_font_size)
-    title_width, _ = measure_text_size(cal, title_font)
-    
-    if not has_cached_template:
-        optimized_draw_text(
-            ctx,
-            cal,
-            width/2 - title_width/2,
-            margin + title_font_size/2,
-            size=title_font_size,
-            rgb_color=text_color
-        )
-    
-    # Always draw guild name (this might change between requests)
-    guild_subtitle = f"XP Events Calendar - {guild_name}"
-    subtitle_font = get_font(None, weekday_font_size)
-    subtitle_width, _ = measure_text_size(guild_subtitle, subtitle_font)
-    
-    # Clear the area where the subtitle will go
-    ctx.set_source_rgb(*bg_color)
-    ctx.rectangle(width/2 - subtitle_width/2 - 10, margin + title_font_size + 10, 
-                 subtitle_width + 20, weekday_font_size + 10)
-    ctx.fill()
-    
-    optimized_draw_text(
-        ctx,
-        guild_subtitle,
-        width/2 - subtitle_width/2,
-        margin + title_font_size + 25,
-        size=weekday_font_size,
-        rgb_color=text_color
-    )
-    
-    # Calculate calendar grid dimensions
-    grid_top = margin + header_height
-    grid_width = width - 2 * margin
-    grid_height = height - grid_top - footer_height - margin
-    cell_width = grid_width / 7
-    
     # Get the calendar info for this month
-    cal = calendar.monthcalendar(year, month)
-    num_weeks = len(cal)
-    cell_height = grid_height / num_weeks
-    
-    # Draw weekday headers - only if we don't have a cached template
-    weekday_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]  
-    # For localization, replace with appropriate names based on language parameter
-    
-    if not has_cached_template:
-        for i, day_name in enumerate(weekday_names):
-            day_x = margin + i * cell_width + cell_width / 2
-            day_y = grid_top - 15
-            
-            # Shortened day name to first 3 letters
-            short_name = day_name[:3]
-            
-            optimized_draw_text(
-                ctx,
-                short_name,
-                day_x,
-                day_y,
-                size=weekday_font_size,
-                rgb_color=text_color,
-                centered=True
-            )
-    
-    # Get current date to highlight today
-    today = datetime.now()
+    month_calendar = calendar.monthcalendar(year, month)
+    num_weeks = len(month_calendar)
     
     # Process events to organize by day
-    # Create a dict mapping day numbers to events that occur on that day
     events_by_day = {}
     for event in events:
         start_time = datetime.fromtimestamp(event["start_time"])
@@ -227,80 +138,229 @@ def _generate_event_calendar_cairo_sync(guild_name, year, month, events, languag
             # Move to the next day
             current_date += timedelta(days=1)
     
-    # Draw calendar grid and days - only handling special cases if we have a cached template
-    for week_idx, week in enumerate(cal):
+    # ==================== CALCULATE ROW HEIGHTS DYNAMICALLY ====================
+    # Count maximum events per day in each row
+    max_events_per_row = []
+    for week in month_calendar:
+        max_events_in_week = 0
+        for day in week:
+            if day != 0 and day in events_by_day:
+                max_events_in_week = max(max_events_in_week, len(events_by_day[day]))
+        max_events_per_row.append(max_events_in_week)
+    
+    # Calculate row heights based on number of events
+    # Base height plus additional height for each event
+    row_heights = []
+    for events_count in max_events_per_row:
+        if events_count == 0:
+            # Minimum height for rows with no events
+            row_heights.append(p["min_row_height"])
+        else:
+            # Calculate height needed for events
+            event_height_needed = p["event_start_y_offset"] + (events_count * p["event_height"]) + ((events_count - 1) * p["event_spacing"]) + 10
+            # Ensure within min/max constraints
+            row_height = max(p["min_row_height"], min(p["max_row_height"], event_height_needed))
+            row_heights.append(row_height)
+    
+    # Calculate total grid height based on the row heights
+    grid_height = sum(row_heights)
+    
+    # Adjust total image height based on grid height
+    calendar_height = p["margin"] + p["header_height"] + p["day_header_height"] + grid_height + p["footer_height"] + p["margin"]
+    
+    # Ensure total height is within constraints
+    calendar_height = max(p["min_calendar_height"], min(p["max_calendar_height"], calendar_height))
+    
+    # If calendar_height is constrained, adjust row heights proportionally
+    if calendar_height != p["margin"] + p["header_height"] + p["day_header_height"] + grid_height + p["footer_height"] + p["margin"]:
+        available_height = calendar_height - p["margin"] - p["header_height"] - p["day_header_height"] - p["footer_height"] - p["margin"]
+        
+        # Scale row heights to fit available height
+        total_current_height = sum(row_heights)
+        if total_current_height > 0:  # Avoid division by zero
+            scale_factor = available_height / total_current_height
+            row_heights = [h * scale_factor for h in row_heights]
+    
+    # If we have a cached template, use it as the base, otherwise create a new surface
+    if has_cached_template:
+        logging.info(f"Using cached calendar template for {month}/{year}")
+        # Create a new surface from the cached template file
+        try:
+            # Load the template as a new surface
+            template_path = _get_calendar_template_path(year, month)
+            template_surface = cairo.ImageSurface.create_from_png(template_path)
+            template_width = template_surface.get_width()
+            template_height = template_surface.get_height()
+            
+            # Create our working surface with the adjusted height
+            surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, p["width"], calendar_height)
+            ctx = cairo.Context(surface)
+            
+            # Fill background first
+            ctx.set_source_rgb(*p["bg_color"])
+            ctx.rectangle(0, 0, p["width"], calendar_height)
+            ctx.fill()
+            
+            # Draw the template onto our surface in the header area
+            header_height = p["margin"] + p["header_height"] + p["day_header_height"]
+            ctx.set_source_surface(template_surface, 0, 0)
+            # Only copy the header portion from the template
+            ctx.rectangle(0, 0, p["width"], header_height)
+            ctx.fill()
+            
+            # Clean up the template surface
+            del template_surface
+        except Exception as e:
+            logging.error(f"Error loading cached template: {e}")
+            # Fall back to creating from scratch
+            surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, p["width"], calendar_height)
+            ctx = cairo.Context(surface)
+            ctx.set_source_rgb(*p["bg_color"])
+            ctx.rectangle(0, 0, p["width"], calendar_height)
+            ctx.fill()
+            has_cached_template = False  # Reset so we rebuild everything
+    else:
+        # Fill background and create from scratch
+        logging.info(f"No cached template for {month}/{year}, creating new")
+        surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, p["width"], calendar_height)
+        ctx = cairo.Context(surface)
+        ctx.set_source_rgb(*p["bg_color"])
+        ctx.rectangle(0, 0, p["width"], calendar_height)
+        ctx.fill()
+    
+    # Draw calendar title and header - only if we don't have a cached template or if it failed to load
+    if not has_cached_template:
+        # Create calendar title
+        month_name = calendar.month_name[month]
+        cal_title = f"{month_name} {year}"
+        
+        # Draw calendar title with fixed vertical position
+        optimized_draw_text(
+            ctx,
+            cal_title,
+            p["width"]/1.7,  # Horizontally centered
+            50,            # Fixed vertical position
+            size=p["title_font_size"],
+            rgb_color=p["text_color"],
+            centered=True
+        )
+        
+        # Draw weekday headers
+        weekday_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]  
+        # For localization, replace with appropriate names based on language parameter
+        
+        grid_top = p["margin"] + p["header_height"] + p["day_header_height"]
+        grid_width = p["width"] - 2 * p["margin"]
+        cell_width = grid_width / 7
+        
+        for i, day_name in enumerate(weekday_names):
+            day_x = p["margin"] + i * cell_width + cell_width / 2
+            day_y = p["margin"] + p["header_height"] + p["day_header_height"] / 2
+            
+            # Shortened day name to first 3 letters
+            short_name = day_name[:3]
+            
+            optimized_draw_text(
+                ctx,
+                short_name,
+                day_x,
+                day_y,
+                size=p["weekday_font_size"],
+                rgb_color=p["text_color"],
+                centered=True
+            )
+    
+    # Draw subtitle with fixed position
+    guild_subtitle = f"XP Events Calendar - {guild_name}"
+    
+    # Clear the area where the subtitle will go
+    ctx.set_source_rgb(*p["bg_color"])
+    ctx.rectangle(p["width"]/2 - 200, 75, 400, 30)
+    ctx.fill()
+    
+    # Fixed position for subtitle
+    optimized_draw_text(
+        ctx,
+        guild_subtitle,
+        p["width"]/1.7,
+        75,  # Fixed vertical position
+        size=p["subtitle_font_size"],
+        rgb_color=p["text_color"],
+        centered=True
+    )
+    
+    # Calculate calendar grid dimensions 
+    grid_top = p["margin"] + p["header_height"] + p["day_header_height"]
+    grid_width = p["width"] - 2 * p["margin"]
+    cell_width = grid_width / 7
+    
+    # Get current date to highlight today
+    today = datetime.now()
+    
+    # Draw calendar grid and days with dynamic row heights
+    row_start_y = grid_top
+    for week_idx, week in enumerate(month_calendar):
+        row_height = row_heights[week_idx]
+        
         for day_idx, day in enumerate(week):
             # Calculate cell position
-            cell_x = margin + day_idx * cell_width
-            cell_y = grid_top + week_idx * cell_height
+            cell_x = p["margin"] + day_idx * cell_width
+            cell_y = row_start_y
             
-            if not has_cached_template:
-                # Draw cell background
-                if day != 0:  # Skip padding days (0)
-                    # Check if it's a weekend
-                    is_weekend = day_idx >= 5  # Saturday and Sunday
-                    
-                    # Set background color based on day type
-                    if is_weekend:
-                        ctx.set_source_rgb(*weekend_bg_color)
-                    else:
-                        ctx.set_source_rgb(*bg_color)
-                    
-                    # Draw cell background
-                    ctx.rectangle(cell_x, cell_y, cell_width, cell_height)
-                    ctx.fill()
-                
-                # Draw grid lines
-                ctx.set_source_rgb(*grid_color)
-                ctx.set_line_width(1)
-                ctx.rectangle(cell_x, cell_y, cell_width, cell_height)
-                ctx.stroke()
-            
-            # Always handle today highlighting since it changes every day
-            if day != 0:
+            # Draw cell background
+            if day != 0:  # Skip padding days (0)
                 # Check if it's today
                 is_today = (today.year == year and today.month == month and today.day == day)
                 
+                # Check if it's a weekend
+                is_weekend = day_idx >= 5  # Saturday and Sunday
+                
+                # Set background color based on day type
                 if is_today:
-                    # Draw today highlight on top of existing cell
-                    ctx.set_source_rgb(*today_bg_color)
-                    ctx.rectangle(cell_x, cell_y, cell_width, cell_height)
-                    ctx.fill()
-                    
-                    # Redraw cell border
-                    ctx.set_source_rgb(*grid_color)
-                    ctx.set_line_width(1)
-                    ctx.rectangle(cell_x, cell_y, cell_width, cell_height)
-                    ctx.stroke()
+                    ctx.set_source_rgb(*p["today_bg_color"])
+                elif is_weekend:
+                    ctx.set_source_rgb(*p["weekend_bg_color"])
+                else:
+                    ctx.set_source_rgb(*p["bg_color"])
+                
+                # Draw cell background
+                ctx.rectangle(cell_x, cell_y, cell_width, row_height)
+                ctx.fill()
+            
+            # Draw grid lines
+            ctx.set_source_rgb(*p["grid_color"])
+            ctx.set_line_width(1)
+            ctx.rectangle(cell_x, cell_y, cell_width, row_height)
+            ctx.stroke()
             
             # Draw day number if this is a valid day
             if day != 0:
                 day_text = str(day)
                 
                 # Position day number in top-left of cell with padding
-                ctx.set_source_rgb(*text_color)
                 optimized_draw_text(
                     ctx,
                     day_text,
-                    cell_x + 10,
-                    cell_y + 20,
-                    size=day_font_size,
-                    rgb_color=text_color
+                    cell_x + p["day_number_padding"],
+                    cell_y + p["day_number_top_padding"],
+                    size=p["day_font_size"],
+                    rgb_color=p["text_color"]
                 )
                 
                 # Draw events for this day
                 if day in events_by_day:
                     day_events = events_by_day[day]
-                    event_y_offset = 35  # Start below day number
                     
                     # Sort events by multiplier (highest first) then by name
                     day_events.sort(key=lambda e: (-e["multiplier"], e["name"]))
                     
-                    # Limit to max 3 events per cell to avoid overflow
-                    max_events = 3
-                    displayed_events = 0
+                    event_y_offset = p["event_start_y_offset"]  # Start below day number
                     
-                    for event in day_events[:max_events]:
+                    for event in day_events:
+                        # Skip drawing if event would be outside the cell
+                        if cell_y + event_y_offset + p["event_height"] > cell_y + row_height:
+                            break
+                        
                         # Choose color based on multiplier
                         multiplier = event["multiplier"]
                         # Find the closest predefined multiplier color
@@ -309,7 +369,7 @@ def _generate_event_calendar_cairo_sync(guild_name, year, month, events, languag
                         
                         # Draw event indicator
                         indicator_width = cell_width - 20
-                        indicator_height = 20
+                        indicator_height = p["event_height"]
                         
                         # Determine if this is the start or end of an event
                         is_start = event["is_start"]
@@ -368,63 +428,63 @@ def _generate_event_calendar_cairo_sync(guild_name, year, month, events, languag
                             ctx,
                             event_text,
                             cell_x + 15,
-                            cell_y + event_y_offset + indicator_height/2,
-                            size=event_font_size,
+                            cell_y + event_y_offset + indicator_height/2 - 13,
+                            size=p["event_font_size"],
                             rgb_color=(1, 1, 1)  # White text
                         )
                         
                         # Increment y offset for next event
-                        event_y_offset += indicator_height + 5
-                        displayed_events += 1
-                    
-                    # If there are more events than we can display, add indicator
-                    if len(day_events) > max_events:
-                        more_text = f"+ {len(day_events) - max_events} more"
-                        optimized_draw_text(
-                            ctx,
-                            more_text,
-                            cell_x + cell_width - 40,
-                            cell_y + cell_height - 10,
-                            size=12,
-                            rgb_color=(0.7, 0.7, 0.7)  # Light gray
-                        )
+                        event_y_offset += indicator_height + p["event_spacing"]
+        
+        # Move to next row
+        row_start_y += row_height
     
-    # Draw legend in the footer - only if we don't have a cached template
-    legend_y = height - footer_height + 15
-    legend_x = margin + 10
+    # Draw legend in the footer
+    legend_y = calendar_height - p["footer_height"]
+    legend_x = p["margin"] + 10
     legend_item_width = 150
     
-    if not has_cached_template:
-        # Title for legend
-        optimized_draw_text(
-            ctx,
-            "XP Multipliers:",
-            legend_x,
-            legend_y,
-            size=16,
-            rgb_color=text_color
-        )
-        
-        # Draw color boxes for each multiplier
-        for i, (multiplier, color) in enumerate(sorted(event_colors.items())):
-            item_x = legend_x + 150 + (i * legend_item_width)
+    # Title for legend
+    optimized_draw_text(
+        ctx,
+        "XP Multipliers:",
+        legend_x,
+        legend_y,
+        size=p["legend_font_size"],
+        rgb_color=p["text_color"]
+    )
+    
+    # Draw color boxes with fixed positions
+    sorted_mults = sorted(event_colors.keys())
+    color_positions = [
+        (250, 1.0),   # Position for 1.0x
+        (400, 2.0),   # Position for 1.5x
+        (550, 3.0),   # Position for 2.0x
+        (700, 4.0),   # Position for 2.5x
+        (850, 5.0),   # Position for 3.0x
+    ]
+    
+    # Draw only the multipliers that exist in our color scheme
+    for pos_x, mult in color_positions:
+        if mult in event_colors:
+            color = event_colors[mult]
             
             # Color box
             ctx.set_source_rgb(*color)
-            ctx.rectangle(item_x, legend_y - 10, 15, 15)
+            ctx.rectangle(pos_x - 5, legend_y + 5, 15, 15)
             ctx.fill_preserve()
             ctx.set_source_rgb(color[0] * 0.7, color[1] * 0.7, color[2] * 0.7)
             ctx.set_line_width(1)
             ctx.stroke()
             
-            # Multiplier text
+            # Multiplier text with fixed position
             optimized_draw_text(
                 ctx,
-                f"{multiplier}x",
-                item_x + 25,
+                f"{mult}x",
+                pos_x - 40,
                 legend_y,
-                size=14,
-                rgb_color=text_color
+                size=p["legend_font_size"],
+                rgb_color=p["text_color"]
             )
     
     # Add generation timestamp
@@ -435,13 +495,13 @@ def _generate_event_calendar_cairo_sync(guild_name, year, month, events, languag
     optimized_draw_text(
         ctx,
         timestamp_text,
-        width - margin - timestamp_width,
-        height - margin,
+        p["width"] - p["margin"] - timestamp_width,
+        calendar_height - p["margin"],
         size=12,
         rgb_color=(0.7, 0.7, 0.7)  # Light gray
     )
     
-    # Convert to bytes
+    # Save to bytes
     image_bytes = io.BytesIO()
     surface.write_to_png(image_bytes)
     image_bytes.seek(0)
@@ -456,28 +516,41 @@ def _generate_event_calendar_cairo_sync(guild_name, year, month, events, languag
     if not has_cached_template:
         try:
             # Create a cloned surface without the events, just the base grid and styling
-            template_surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, width, height)
+            template_surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, p["width"], calendar_height)
             template_ctx = cairo.Context(template_surface)
             
             # Fill background
-            template_ctx.set_source_rgb(*bg_color)
-            template_ctx.rectangle(0, 0, width, height)
+            template_ctx.set_source_rgb(*p["bg_color"])
+            template_ctx.rectangle(0, 0, p["width"], calendar_height)
             template_ctx.fill()
             
-            # Draw calendar title (Month Year)
+            # Define calendar title
+            month_name = calendar.month_name[month]
+            cal_title = f"{month_name} {year}"
+            
+            # Draw calendar title with fixed position in template
             optimized_draw_text(
                 template_ctx,
-                cal,
-                width/2 - title_width/2,
-                margin + title_font_size/2,
-                size=title_font_size,
-                rgb_color=text_color
+                cal_title,
+                p["width"]/2,
+                50,  # Fixed vertical position
+                size=p["title_font_size"],
+                rgb_color=p["text_color"],
+                centered=True
             )
             
             # Draw weekday headers
+            weekday_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+            
+            grid_top = p["margin"] + p["header_height"] + p["day_header_height"]
+            grid_width = p["width"] - 2 * p["margin"]
+            cell_width = grid_width / 7
+            
             for i, day_name in enumerate(weekday_names):
-                day_x = margin + i * cell_width + cell_width / 2
-                day_y = grid_top - 15
+                day_x = p["margin"] + i * cell_width + cell_width / 2
+                day_y = p["margin"] + p["header_height"] + p["day_header_height"] / 2
+                
+                # Shortened day name to first 3 letters
                 short_name = day_name[:3]
                 
                 optimized_draw_text(
@@ -485,77 +558,13 @@ def _generate_event_calendar_cairo_sync(guild_name, year, month, events, languag
                     short_name,
                     day_x,
                     day_y,
-                    size=weekday_font_size,
-                    rgb_color=text_color,
+                    size=p["weekday_font_size"],
+                    rgb_color=p["text_color"],
                     centered=True
                 )
             
-            # Draw basic grid with empty cells
-            for week_idx, week in enumerate(cal):
-                for day_idx, day in enumerate(week):
-                    # Calculate cell position
-                    cell_x = margin + day_idx * cell_width
-                    cell_y = grid_top + week_idx * cell_height
-                    
-                    # Draw cell background (but not specific day styling)
-                    if day != 0:  # Skip padding days (0)
-                        # Check if it's a weekend
-                        is_weekend = day_idx >= 5  # Saturday and Sunday
-                        
-                        # Set background color based on day type
-                        if is_weekend:
-                            template_ctx.set_source_rgb(*weekend_bg_color)
-                        else:
-                            template_ctx.set_source_rgb(*bg_color)
-                        
-                        # Draw cell background
-                        template_ctx.rectangle(cell_x, cell_y, cell_width, cell_height)
-                        template_ctx.fill()
-                    
-                    # Draw grid lines
-                    template_ctx.set_source_rgb(*grid_color)
-                    template_ctx.set_line_width(1)
-                    template_ctx.rectangle(cell_x, cell_y, cell_width, cell_height)
-                    template_ctx.stroke()
-            
-            # Draw legend in the footer (without timestamp)
-            legend_y = height - footer_height + 15
-            legend_x = margin + 10
-            legend_item_width = 150
-            
-            # Title for legend
-            optimized_draw_text(
-                template_ctx,
-                "XP Multipliers:",
-                legend_x,
-                legend_y,
-                size=16,
-                rgb_color=text_color
-            )
-            
-            # Draw color boxes for each multiplier
-            for i, (multiplier, color) in enumerate(sorted(event_colors.items())):
-                item_x = legend_x + 150 + (i * legend_item_width)
-                
-                # Color box
-                template_ctx.set_source_rgb(*color)
-                template_ctx.rectangle(item_x, legend_y - 10, 15, 15)
-                template_ctx.fill_preserve()
-                template_ctx.set_source_rgb(color[0] * 0.7, color[1] * 0.7, color[2] * 0.7)
-                template_ctx.set_line_width(1)
-                template_ctx.stroke()
-                
-                # Multiplier text
-                optimized_draw_text(
-                    template_ctx,
-                    f"{multiplier}x",
-                    item_x + 25,
-                    legend_y,
-                    size=14,
-                    rgb_color=text_color
-                )
-            
-            # Save the template to disk
+            # Save the template to disk - only save part of the template (header area)
+            # This way we can reuse the header even with dynamic row heights
             template_path = _get_calendar_template_path(year, month)
             template_surface.write_to_png(template_path)
             logging.info(f"Cached calendar template for {month}/{year} to {template_path}")
@@ -570,7 +579,7 @@ def _generate_event_calendar_cairo_sync(guild_name, year, month, events, languag
 
 async def generate_event_calendar(guild_id, guild_name, year=None, month=None, bot=None):
     """
-    Async wrapper to generate a calendar image for XP boost events
+    Async wrapper to generate a calendar image for XP boost events with dynamic row heights
     
     Parameters:
     - guild_id: ID of the Discord guild

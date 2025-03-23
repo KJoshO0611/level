@@ -16,3 +16,4 @@ utils/image_generator.py
 utils/lbtest.py
 utils/test.py
 utils/hybrid_text_handler.py
+utils/calendar_test.py
