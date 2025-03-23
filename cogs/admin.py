@@ -6,7 +6,6 @@ import os
 from datetime import datetime
 from discord import app_commands
 from discord.ext import commands, tasks
-from modules.voice_activity import voice_sessions
 from utils.performance_monitoring import performance_data
 from utils.cairo_image_generator import get_text_rendering_stats
 from modules.databasev2 import (
@@ -480,9 +479,9 @@ class AdminCommands(commands.Cog):
             
             await ctx.send(embed=embed)
 
-    @commands.command(name="performance", hidden=True)
+    @commands.command(name="perfstats", aliases=["botstats"], hidden=True)
     @commands.has_permissions(administrator=True)
-    async def performance_status(ctx):
+    async def performance_status(self, ctx):
         """Show performance metrics for the bot"""
         if not PSUTIL_AVAILABLE:
             psutil_status = "⚠️ psutil not installed (memory metrics unavailable)"
@@ -518,6 +517,9 @@ class AdminCommands(commands.Cog):
         
         # Voice session metrics
         try:
+            # Import voice_sessions here to avoid circular imports
+            from modules import voice_activity
+            voice_sessions = voice_activity.voice_sessions
             
             total_sessions = len(voice_sessions)
             total_history = sum(

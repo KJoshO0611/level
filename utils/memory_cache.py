@@ -266,8 +266,16 @@ class MemoryAwareCache:
             # Estimate size of new value
             size = self._estimate_size(value)
             
-            # Store value as weak reference if configured
-            value_ref = weakref.ref(value) if self.weak_refs else value
+            # Try to create weak reference if configured, but handle types that don't support it
+            if self.weak_refs:
+                try:
+                    value_ref = weakref.ref(value)
+                except TypeError:
+                    # If the object doesn't support weak references, store it directly
+                    value_ref = value
+                    logging.debug(f"Object of type {type(value).__name__} doesn't support weak references, storing directly")
+            else:
+                value_ref = value
             
             # Update cache
             self.cache[key] = (value_ref, time.time(), size)

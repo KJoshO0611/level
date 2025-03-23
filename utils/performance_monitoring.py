@@ -4,7 +4,6 @@ import functools
 import discord
 import asyncio
 from discord.ext import commands, tasks
-from modules.voice_activity import voice_sessions
 
 # For memory profiling
 try:
@@ -172,8 +171,10 @@ def time_function(function=None, *, name=None, log_always=False):
 async def session_metrics_monitor():
     """Periodically log voice session metrics"""
     try:
-        # Import the voice sessions dict - adjust import path as needed
-        
+        # Get the voice_sessions dictionary without importing it directly
+        # This avoids circular imports
+        from modules import voice_activity
+        voice_sessions = getattr(voice_activity, 'voice_sessions', {})
         
         if not voice_sessions:
             logging.info("Session metrics: No active voice sessions")
@@ -280,7 +281,9 @@ async def start_monitoring(bot):
         
         # Voice session metrics
         try:
-            
+            # Get voice_sessions without directly importing it
+            from modules import voice_activity
+            voice_sessions = getattr(voice_activity, 'voice_sessions', {})
             
             total_sessions = len(voice_sessions)
             total_history = sum(

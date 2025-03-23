@@ -358,7 +358,7 @@ def initialize_status_indicators():
         ctx.fill()
         
         # Store in cache with unique key
-        TEMPLATE_CACHE[f'status_{status}'] = surface
+        TEMPLATE_CACHE.set(f'status_{status}', surface)
         
     logging.info("Pre-rendered status indicators for online, idle, dnd, and offline states")
 
@@ -537,7 +537,7 @@ def initialize_template_cache():
                 ctx.fill()
     
     # Store in cache
-    TEMPLATE_CACHE['level_card_bg'] = surface
+    TEMPLATE_CACHE.set('level_card_bg', surface)
 
 # Call initialization during module import
 initialize_template_cache()

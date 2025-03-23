@@ -16,6 +16,7 @@ from utils.image_templates import initialize_image_templates
 from cogs.leveling import LevelingCommands
 from utils.avatar_cache import avatar_cache
 from cogs.config_commands import ConfigCommands
+from cogs.calendar_commands import CalendarCommands
 from cogs.card_customization import BackgroundCommands
 from utils.rate_limiter import RateLimiter, RateLimitExceeded
 from modules.levels import handle_message_xp
@@ -68,7 +69,8 @@ def setup_bot():
         await bot.add_cog(AdminCommands(bot))
         await bot.add_cog(CustomHelpCommand(bot))
         await bot.add_cog(ConfigCommands(bot)) 
-        await bot.add_cog(BackgroundCommands(bot)) 
+        await bot.add_cog(BackgroundCommands(bot))
+        await bot.add_cog(CalendarCommands(bot))
         await bot.tree.sync()
 
     # Make this method accessible
@@ -122,9 +124,6 @@ def run_bot():
         avatar_cache.start_cleanup_task(bot.loop)
         logging.info(f"Avatar cache initialized (max size: {avatar_cache.max_size})")
         
-        await start_monitoring(bot)
-        logging.info("Performance monitoring started")
-
         bot.loop.run_in_executor(
             bot.image_thread_pool, 
             initialize_image_templates,
@@ -147,6 +146,9 @@ def run_bot():
         await bot.setup_cogs()
         await bot.tree.sync()
         logging.info(f"Bot is ready in {len(bot.guilds)} guilds")
+
+        await start_monitoring(bot)
+        logging.info("Performance monitoring started")
 
     @bot.event
     async def on_message(message):
@@ -312,7 +314,7 @@ def run_bot():
 
             stop_monitoring()
             logging.info("Stopping monitoring...")
-            
+
             # Log completion
             logging.info("Cleanup process complete. Exiting gracefully.")
         
