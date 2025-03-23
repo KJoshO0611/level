@@ -40,6 +40,8 @@ async def get_event_xp_multiplier(guild_id: str) -> float:
 async def award_xp_and_handle_level_up(guild_id, user_id, xp_amount, member, update_last_xp_time=False):
     """
     Awards XP to a user, handles level-up logic, and sends level-up notifications.
+    This function applies event multipliers to the XP.
+    
     Returns a tuple of (new_xp, new_level, leveled_up)
     
     Parameters:
@@ -139,6 +141,100 @@ async def award_xp_and_handle_level_up(guild_id, user_id, xp_amount, member, upd
                     logging.error(f"Failed to manage roles: {e}")
             else:
                 logging.info(f"Did not change role")
+    
+    return (xp, level, leveled_up)
+
+async def award_xp_without_event_multiplier(guild_id, user_id, xp_amount, member, update_last_xp_time=False):
+    """
+    Awards XP to a user, handles level-up logic, and sends level-up notifications.
+    This function does NOT apply event multipliers to the XP since they should have already been applied.
+    
+    Returns a tuple of (new_xp, new_level, leveled_up)
+    
+    Parameters:
+    - update_last_xp_time: If True, updates the last_xp_time; False will keep the existing timestamp
+    """
+    # Get current user level data - use cached version for better performance
+    xp, level, last_xp_time, last_assigned_role_id = await get_or_create_user_level(guild_id, user_id)
+    
+    # Track if this is a new user (for level 1 role assignment)
+    is_new_user = (xp == 0 and level == 1)
+
+    # Add XP (no event multiplier applied)
+    xp += xp_amount
+    
+    # Check for level up
+    leveled_up = False
+    while xp >= xp_to_next_level(level):
+        xp -= xp_to_next_level(level)
+        level += 1
+        leveled_up = True
+    
+    # Update database - only update last_xp_time if specified
+    current_time = time.time()
+    if update_last_xp_time:
+        await update_user_xp(guild_id, user_id, xp, level, current_time, last_assigned_role_id)
+    else:
+        # Keep the existing last_xp_time 
+        await update_user_xp(guild_id, user_id, xp, level, last_xp_time, last_assigned_role_id)
+
+    # Get level roles for this guild from the database - use cached version for better performance
+    guild_level_roles = await get_level_roles(guild_id)
+
+    # Handle level 1 role assignment for new users
+    if is_new_user and 1 in guild_level_roles:
+        role_id = guild_level_roles[1]
+        guild = member.guild
+        level_one_role = guild.get_role(int(role_id))
+        
+        if level_one_role:
+            try:
+                # Assign the level 1 role
+                await member.add_roles(level_one_role)
+                logging.info(f"Assigned initial role {level_one_role.name} to {member.name} (level 1)")
+                
+                # Update the last assigned role in the database
+                await update_user_xp(guild_id, user_id, xp, level, 
+                                    current_time if update_last_xp_time else last_xp_time, 
+                                    str(role_id))
+                last_assigned_role_id = str(role_id)  # Update the variable for later use
+            except discord.Forbidden:
+                logging.error(f"Bot lacks permissions to manage roles.")
+            except discord.HTTPException as e:
+                logging.error(f"Failed to manage roles: {e}")
+
+    # Handle level-up notification if needed
+    if leveled_up:
+        await send_level_up_notification(guild_id, member, level)
+
+        # Check for role assignment
+        if level in guild_level_roles:
+            role_id = guild_level_roles[level]
+            guild = member.guild
+            new_role = guild.get_role(int(role_id))
+            
+            if new_role:
+                try:
+                    # Remove previous role if it exists
+                    if last_assigned_role_id:
+                        previous_role = guild.get_role(int(last_assigned_role_id))
+                        if previous_role and previous_role in member.roles:
+                            await member.remove_roles(previous_role)
+                            logging.info(f"Removed role {previous_role.name} from {member.name}")
+
+                    # Assign the new role
+                    await member.add_roles(new_role)
+                    logging.info(f"Assigned role {new_role.name} to {member.name} (level {level})")
+
+                    # Update the last assigned role in the database
+                    await update_user_xp(guild_id, user_id, xp, level, 
+                                        current_time if update_last_xp_time else last_xp_time, 
+                                        str(role_id))
+
+                except discord.Forbidden:
+                    logging.error(f"Bot lacks permissions to manage roles.")
+                except discord.HTTPException as e:
+                    logging.error(f"Failed to manage roles: {e}")
     
     return (xp, level, leveled_up)
 

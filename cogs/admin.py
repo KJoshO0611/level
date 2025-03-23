@@ -371,12 +371,10 @@ class AdminCommands(commands.Cog):
         
         await ctx.send(embed=embed)
 
-    # Then in your admin commands:
     @commands.command(name="textstats", aliases=["ts"])
     @commands.has_permissions(administrator=True)
     async def text_stats(self, ctx):
-        """Display text rendering cache statistics"""
-        
+        """Display text rendering cache statistics with memory usage"""
         
         stats = get_text_rendering_stats()
         
@@ -385,12 +383,93 @@ class AdminCommands(commands.Cog):
             color=discord.Color.blue()
         )
         
-        embed.add_field(name="Font Cache", value=f"{stats['font_cache_size']} fonts loaded", inline=True)
-        embed.add_field(name="Text Measurements", value=f"{stats['text_measure_cache_size']} entries", inline=True)
-        embed.add_field(name="Script Cache", value=f"{stats['script_cache_size']} usernames", inline=True)
+        # Add fields for each cache
+        for cache_name, cache_stats in stats.items():
+            embed.add_field(
+                name=f"{cache_stats['name']} Cache",
+                value=(
+                    f"Items: {cache_stats['items']}/{cache_stats['max_items']}\n"
+                    f"Memory: {cache_stats['memory_mb']:.2f}MB/{cache_stats['max_memory_mb']:.2f}MB\n"
+                    f"Hit Ratio: {cache_stats['hit_ratio']*100:.1f}%"
+                ),
+                inline=True
+            )
+        
+        # Add total memory usage
+        total_memory = sum(cache_stats['memory_mb'] for cache_stats in stats.values())
+        embed.add_field(
+            name="Total Memory Usage",
+            value=f"{total_memory:.2f}MB",
+            inline=False
+        )
         
         await ctx.send(embed=embed)
         
+    @commands.command(name="clearcache", aliases=["cc"])
+    @commands.has_permissions(administrator=True)
+    async def clear_cache(self, ctx, cache_name=None):
+        """Clear specific or all image caches"""
+        from utils.cairo_image_generator import (
+            FONT_CACHE, TEXT_MEASURE_CACHE, SCRIPT_CACHE, 
+            TEMPLATE_CACHE, BACKGROUND_CACHE
+        )
+        
+        caches = {
+            "font": FONT_CACHE,
+            "text": TEXT_MEASURE_CACHE,
+            "script": SCRIPT_CACHE,
+            "template": TEMPLATE_CACHE,
+            "background": BACKGROUND_CACHE
+        }
+        
+        if cache_name and cache_name.lower() in caches:
+            # Clear specific cache
+            cache = caches[cache_name.lower()]
+            before_items = len(cache)
+            before_memory = cache.current_memory / (1024 * 1024)
+            
+            cache.clear()
+            
+            await ctx.send(
+                f"✅ Cleared {cache_name} cache. "
+                f"Freed {before_items} items and {before_memory:.2f}MB of memory."
+            )
+        elif cache_name and cache_name.lower() == "all":
+            # Clear all caches
+            total_items = 0
+            total_memory = 0
+            
+            for cache in caches.values():
+                total_items += len(cache)
+                total_memory += cache.current_memory / (1024 * 1024)
+                cache.clear()
+            
+            # Force garbage collection
+            import gc
+            gc.collect()
+            
+            await ctx.send(
+                f"✅ Cleared ALL caches. "
+                f"Freed {total_items} items and {total_memory:.2f}MB of memory."
+            )
+            
+        else:
+            # Show cache sizes
+            embed = discord.Embed(
+                title="Cache Sizes",
+                description="Use `!!clearcache [cache_name]` to clear a specific cache, or `!!clearcache all` to clear all caches.",
+                color=discord.Color.blue()
+            )
+            
+            for name, cache in caches.items():
+                embed.add_field(
+                    name=f"{name.capitalize()} Cache",
+                    value=f"{len(cache)} items, {cache.current_memory / (1024 * 1024):.2f}MB",
+                    inline=True
+                )
+            
+            await ctx.send(embed=embed)
+
     #slash command
     @app_commands.command(name="xpboost", description="Set an XP boost multiplier for a channel")
     @app_commands.describe(

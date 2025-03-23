@@ -1,19 +1,18 @@
 import discord
 import time
-from discord.ext import tasks
-from modules.databasev2 import get_or_create_user_level, apply_channel_boost
-from modules.levels import award_xp_and_handle_level_up
-from config import load_config
 import logging
 import asyncio
+from discord.ext import tasks
+from config import load_config
+from modules.databasev2 import get_or_create_user_level, apply_channel_boost
+from modules.levels import award_xp_without_event_multiplier, send_level_up_notification, xp_to_next_level
 
 config = load_config()
 XP_RATES = config["XP_SETTINGS"]["RATES"]
 IDLE_THRESHOLD = config["XP_SETTINGS"]["IDLE_THRESHOLD"]
 
-# Tracking dictionaries
-vc_timers = {}  # When a user joined a voice channel
-vc_states = {}  # Current activity state of users (active, idle, muted, streaming, watching)
+# Enhanced tracking dictionaries
+voice_sessions = {}  # Detailed voice session tracking
 last_spoke = {}  # Last time a user was detected as speaking
 voice_channels = {}  # Track which channel a user is in
 stream_watchers = {}  # Track users who are watching streams
@@ -40,6 +39,126 @@ def determine_voice_state(voice_state):
     # Default to active when joining (will be updated to "watching" if applicable)
     return "active"
 
+async def get_all_xp_boost_events_for_guild(guild_id):
+    """
+    Get all XP boost events for a guild (active, past, and future)
+    
+    Returns a list of events with start_time, end_time, and multiplier
+    """
+    from modules.databasev2 import get_active_xp_boost_events, get_upcoming_xp_boost_events
+    
+    # Get active events
+    active_events = await get_active_xp_boost_events(guild_id)
+    upcoming_events = await get_upcoming_xp_boost_events(guild_id)
+    
+    # Combine all events
+    all_events = active_events + upcoming_events
+    
+    return all_events
+
+async def calculate_event_adjusted_xp(base_xp, start_time, end_time, events):
+    """Calculate XP with consideration for event multipliers during specific time periods"""
+    
+    # If no events, return base XP
+    if not events:
+        return base_xp
+        
+    # Create time slices based on event boundaries
+    time_slices = []
+    
+    # Start with the whole period
+    current_slices = [{"start": start_time, "end": end_time, "multiplier": 1.0}]
+    
+    # Split each slice by each event
+    for event in events:
+        event_start = event["start_time"]
+        event_end = event["end_time"]
+        event_multiplier = event["multiplier"]
+        
+        new_slices = []
+        
+        for slice in current_slices:
+            slice_start = slice["start"]
+            slice_end = slice["end"]
+            slice_multiplier = slice["multiplier"]
+            
+            # Cases:
+            # 1. Event doesn't overlap with this slice
+            if event_end <= slice_start or event_start >= slice_end:
+                new_slices.append(slice)
+                continue
+                
+            # 2. Event completely covers this slice
+            if event_start <= slice_start and event_end >= slice_end:
+                new_slices.append({
+                    "start": slice_start,
+                    "end": slice_end,
+                    "multiplier": max(slice_multiplier, event_multiplier)
+                })
+                continue
+                
+            # 3. Event starts during this slice
+            if event_start > slice_start and event_start < slice_end:
+                # Add pre-event part
+                new_slices.append({
+                    "start": slice_start,
+                    "end": event_start,
+                    "multiplier": slice_multiplier
+                })
+                
+                # Add during-event part (if any)
+                if event_end < slice_end:
+                    new_slices.append({
+                        "start": event_start,
+                        "end": event_end,
+                        "multiplier": max(slice_multiplier, event_multiplier)
+                    })
+                    
+                    # Add post-event part
+                    new_slices.append({
+                        "start": event_end,
+                        "end": slice_end,
+                        "multiplier": slice_multiplier
+                    })
+                else:
+                    # Event extends beyond slice end
+                    new_slices.append({
+                        "start": event_start,
+                        "end": slice_end,
+                        "multiplier": max(slice_multiplier, event_multiplier)
+                    })
+                continue
+                
+            # 4. Event ends during this slice
+            if event_end > slice_start and event_end < slice_end:
+                # Add during-event part
+                new_slices.append({
+                    "start": slice_start,
+                    "end": event_end,
+                    "multiplier": max(slice_multiplier, event_multiplier)
+                })
+                
+                # Add post-event part
+                new_slices.append({
+                    "start": event_end,
+                    "end": slice_end,
+                    "multiplier": slice_multiplier
+                })
+        
+        current_slices = new_slices
+    
+    # Calculate total XP based on duration and multiplier for each slice
+    total_duration = end_time - start_time
+    total_xp = 0
+    
+    for slice in current_slices:
+        slice_duration = slice["end"] - slice["start"]
+        slice_fraction = slice_duration / total_duration
+        slice_xp = int(base_xp * slice_fraction * slice["multiplier"])
+        total_xp += slice_xp
+    
+    return total_xp
+
 def update_stream_watchers(bot, channel, streamer_id=None):
     """
     Update the list of stream watchers in a channel.
@@ -63,40 +182,28 @@ def update_stream_watchers(bot, channel, streamer_id=None):
             user_id = str(member.id)
             if user_id not in streamers and member.voice and not member.voice.self_deaf and not member.voice.deaf:
                 # Mark as a watcher if they're not streaming themselves and not deafened
-                if user_id in vc_states and vc_states[user_id]["state"] != "watching":
-                    # Calculate XP for previous state before changing to "watching"
-                    guild_id = str(channel.guild.id)
+                if user_id in voice_sessions:
+                    # Record the end of the previous state
                     current_time = time.time()
-                    previous_state = vc_states[user_id]["state"]
-                    state_start_time = vc_states[user_id]["since"]
-                    state_duration = current_time - state_start_time
-                    minutes_spent = int(state_duration // 60)
+                    previous_state = voice_sessions[user_id]["current_state"]
+                    state_start_time = voice_sessions[user_id]["state_start_time"]
                     
-                    # Get the channel_id for applying the boost
-                    channel_id = voice_channels.get(user_id)
+                    # Add previous state to history
+                    if "state_history" not in voice_sessions[user_id]:
+                        voice_sessions[user_id]["state_history"] = []
                     
-                    if minutes_spent > 0:
-                        base_xp = minutes_spent * XP_RATES[previous_state]
-                        
-                        # Apply channel boost if channel_id is available
-                        if channel_id:
-                            xp_earned = apply_channel_boost(base_xp, channel_id)
-                            logging.info(f"State change to watching with channel boost: Base XP: {base_xp}, Boosted XP: {xp_earned}, Channel: {channel_id}")
-                        else:
-                            xp_earned = base_xp
-                        
-                        # Get member object to pass to award_xp function
-                        member_obj = channel.guild.get_member(int(user_id))
-                        if member_obj:
-                            asyncio.create_task(get_or_create_user_level(guild_id, user_id))
-                            asyncio.create_task(award_xp_and_handle_level_up(guild_id, user_id, xp_earned, member_obj))
+                    voice_sessions[user_id]["state_history"].append({
+                        "state": previous_state,
+                        "start": state_start_time,
+                        "end": current_time,
+                        "channel_id": voice_sessions[user_id]["channel_id"]
+                    })
                     
                     # Update to watching state
-                    vc_states[user_id] = {
-                        "state": "watching",
-                        "since": current_time
-                    }
+                    voice_sessions[user_id]["current_state"] = "watching"
+                    voice_sessions[user_id]["state_start_time"] = current_time
                     logging.info(f"User {member.name} is now watching a stream")
+                
                 stream_watchers[user_id] = True
     else:
         # No streamers in channel, update anyone who was a watcher
@@ -106,33 +213,19 @@ def update_stream_watchers(bot, channel, streamer_id=None):
                 del stream_watchers[user_id]
                 
                 # Change state from watching to active if needed
-                if user_id in vc_states and vc_states[user_id]["state"] == "watching":
-                    guild_id = str(channel.guild.id)
+                if user_id in voice_sessions and voice_sessions[user_id]["current_state"] == "watching":
                     current_time = time.time()
                     
-                    # Calculate XP for watching time
-                    watching_start = vc_states[user_id]["since"]
-                    watching_duration = current_time - watching_start
-                    minutes_spent = int(watching_duration // 60)
+                    # Record the end of the watching state
+                    if "state_history" not in voice_sessions[user_id]:
+                        voice_sessions[user_id]["state_history"] = []
                     
-                    # Get the channel_id for applying the boost
-                    channel_id = voice_channels.get(user_id)
-                    
-                    if minutes_spent > 0:
-                        base_xp = minutes_spent * XP_RATES["watching"]
-                        
-                        # Apply channel boost if channel_id is available
-                        if channel_id:
-                            xp_earned = apply_channel_boost(base_xp, channel_id)
-                            logging.info(f"Watching to active with channel boost: Base XP: {base_xp}, Boosted XP: {xp_earned}, Channel: {channel_id}")
-                        else:
-                            xp_earned = base_xp
-                        
-                        # Get member object
-                        member_obj = channel.guild.get_member(int(user_id))
-                        if member_obj:
-                            asyncio.create_task(get_or_create_user_level(guild_id, user_id))
-                            asyncio.create_task(award_xp_and_handle_level_up(guild_id, user_id, xp_earned, member_obj))
+                    voice_sessions[user_id]["state_history"].append({
+                        "state": "watching",
+                        "start": voice_sessions[user_id]["state_start_time"],
+                        "end": current_time,
+                        "channel_id": voice_sessions[user_id]["channel_id"]
+                    })
                     
                     # Determine new state based on voice properties
                     new_state = "active"
@@ -141,63 +234,97 @@ def update_stream_watchers(bot, channel, streamer_id=None):
                             new_state = "muted"
                     
                     # Update to new state
-                    vc_states[user_id] = {
-                        "state": new_state,
-                        "since": current_time
-                    }
+                    voice_sessions[user_id]["current_state"] = new_state
+                    voice_sessions[user_id]["state_start_time"] = current_time
                     logging.info(f"User {member.name} is no longer watching a stream, now {new_state}")
 
-async def handle_voice_channel_exit(guild_id, user_id, vc_states_dict, member):
+async def handle_voice_channel_exit(guild_id, user_id, member):
     """Process XP for a user leaving voice channel, considering their various states"""
-    current_time = time.time()
-    total_xp = 0
+    if user_id not in voice_sessions:
+        return
     
-    if user_id in vc_states_dict:
-        # Calculate XP for the final state
-        final_state = vc_states_dict[user_id]["state"]
-        state_start_time = vc_states_dict[user_id]["since"]
-        time_in_final_state = current_time - state_start_time
-        minutes_in_final_state = int(time_in_final_state // 60)
+    current_time = time.time()
+    
+    # Finalize current state by adding it to history
+    current_state = voice_sessions[user_id]["current_state"]
+    start_time = voice_sessions[user_id]["state_start_time"]
+    
+    # Make sure state_history exists
+    if "state_history" not in voice_sessions[user_id]:
+        voice_sessions[user_id]["state_history"] = []
+    
+    # Add current state to history
+    voice_sessions[user_id]["state_history"].append({
+        "state": current_state,
+        "start": start_time,
+        "end": current_time,
+        "channel_id": voice_sessions[user_id]["channel_id"]
+    })
+    
+    # Get all XP boost events for this guild
+    all_events = await get_all_xp_boost_events_for_guild(guild_id)
+    
+    # Calculate XP for each state period
+    total_xp = 0
+    for state_period in voice_sessions[user_id]["state_history"]:
+        state = state_period["state"]
+        period_start = state_period["start"]
+        period_end = state_period["end"]
+        channel_id = state_period["channel_id"]
         
-        # Get the channel_id for applying the boost
-        channel_id = voice_channels.get(user_id)
+        # Calculate duration in minutes
+        duration_seconds = period_end - period_start
+        minutes_in_state = int(duration_seconds // 60)
         
-        if minutes_in_final_state > 0:
-            base_xp = minutes_in_final_state * XP_RATES[final_state]
-            
-            # Apply channel boost if channel_id is available
-            if channel_id:
-                xp_for_final_state = apply_channel_boost(base_xp, channel_id)
-                logging.info(f"Voice XP with channel boost: Base XP: {base_xp}, Boosted XP: {xp_for_final_state}, Channel: {channel_id}")
-            else:
-                xp_for_final_state = base_xp
-                logging.info(f"Voice XP without boost: {xp_for_final_state}")
-                
-            total_xp += xp_for_final_state
-            logging.info(f"Awarding {xp_for_final_state} XP for {minutes_in_final_state} minutes in {final_state} state")
+        if minutes_in_state <= 0:
+            continue
+        
+        # Get the basic XP for this time
+        base_xp = minutes_in_state * XP_RATES[state]
+        
+        # Apply channel boost if channel_id is available
+        if channel_id:
+            boosted_xp = apply_channel_boost(base_xp, channel_id)
+            logging.info(f"Voice state {state} with channel boost: Base XP: {base_xp}, Boosted XP: {boosted_xp}, Channel: {channel_id}")
+        else:
+            boosted_xp = base_xp
+            logging.info(f"Voice state {state} without boost: {boosted_xp}")
+        
+        # Calculate event-adjusted XP for this period
+        period_xp = await calculate_event_adjusted_xp(
+            boosted_xp,
+            period_start,
+            period_end,
+            all_events
+        )
+        
+        total_xp += period_xp
+        logging.info(f"Added {period_xp} XP for {minutes_in_state} minutes in {state} state (after event adjustments)")
     
     # Award the total XP if any was earned
     if total_xp > 0:
         logging.info(f"Awarding total of {total_xp} XP to {member.name} for voice activity")
-        await get_or_create_user_level(guild_id, user_id)
-        await award_xp_and_handle_level_up(guild_id, user_id, total_xp, member)
+        await award_xp_without_event_multiplier(guild_id, user_id, total_xp, member)
     else:
         logging.info(f"No XP awarded to {member.name} for voice activity (total_xp = {total_xp})")
     
     # Clean up the tracking
+    del voice_sessions[user_id]
     if user_id in voice_channels:
         del voice_channels[user_id]
     if user_id in stream_watchers:
         del stream_watchers[user_id]
+    if user_id in last_spoke:
+        del last_spoke[user_id]
 
 async def handle_voice_state_update(bot, member, before, after):
     """Handle voice state update events"""
     guild_id = str(member.guild.id)
     user_id = str(member.id)
+    current_time = time.time()
     
     # User joins a voice channel
     if after.channel and not before.channel:
-
         voice_action_key = f"voice_join:{user_id}"
         is_limited, _ = await bot.rate_limiters["voice_xp"].check_rate_limit(voice_action_key)
         
@@ -205,20 +332,20 @@ async def handle_voice_state_update(bot, member, before, after):
             # Still track but log the rate limit
             logging.info(f"Rate limited voice join for user {user_id}")
             
-        vc_timers[user_id] = time.time()
-        
         # Store the channel id
         voice_channels[user_id] = str(after.channel.id)
         
-        # Initialize user's voice state
+        # Initialize user's voice session
         state = determine_voice_state(after)
-        vc_states[user_id] = {
-            "state": state,
-            "since": time.time()
+        voice_sessions[user_id] = {
+            "channel_id": str(after.channel.id),
+            "current_state": state,
+            "state_start_time": current_time,
+            "state_history": []
         }
         
         # Initialize speaking timestamp
-        last_spoke[user_id] = time.time()
+        last_spoke[user_id] = current_time
         
         # Check if the user should be marked as watching a stream
         if state != "streaming" and state != "muted":
@@ -226,38 +353,47 @@ async def handle_voice_state_update(bot, member, before, after):
             for member_in_channel in after.channel.members:
                 if member_in_channel.voice and getattr(member_in_channel.voice, 'self_stream', False):
                     # There's at least one streamer, mark this user as watching
-                    vc_states[user_id] = {
-                        "state": "watching",
-                        "since": time.time()
-                    }
+                    voice_sessions[user_id]["current_state"] = "watching"
                     stream_watchers[user_id] = True
                     logging.info(f"User {member.name} joined and is now watching a stream")
                     break
         
     # User leaves a voice channel
     elif before.channel and not after.channel:
-        if user_id in vc_timers:
-            # Remove the timer
-            vc_timers.pop(user_id, None)
-            
-            # Calculate total time and award XP for the entire session
-            await handle_voice_channel_exit(guild_id, user_id, vc_states, member)
-            
-            # Clear other tracking data after processing
-            if user_id in vc_states:
-                del vc_states[user_id]
-            if user_id in last_spoke:
-                del last_spoke[user_id]
-            
-            # If user was streaming, update watchers in the channel they left
-            if before.self_stream:
-                update_stream_watchers(bot, before.channel)
+        # Process accumulated XP with event awareness
+        await handle_voice_channel_exit(guild_id, user_id, member)
+        
+        # If user was streaming, update watchers in the channel they left
+        if before.self_stream:
+            update_stream_watchers(bot, before.channel)
     
     # User changes voice state (mute/deafen/stream/etc.) but stays in a channel
     elif after.channel and before.channel:
         # Update channel if they moved to a different channel
         if before.channel.id != after.channel.id:
-            voice_channels[user_id] = str(after.channel.id)
+            if user_id in voice_sessions:
+                # Record the end of the state in the previous channel
+                previous_state = voice_sessions[user_id]["current_state"]
+                previous_start_time = voice_sessions[user_id]["state_start_time"]
+                previous_channel = voice_sessions[user_id]["channel_id"]
+                
+                # Add to state history
+                if "state_history" not in voice_sessions[user_id]:
+                    voice_sessions[user_id]["state_history"] = []
+                
+                voice_sessions[user_id]["state_history"].append({
+                    "state": previous_state,
+                    "start": previous_start_time,
+                    "end": current_time,
+                    "channel_id": previous_channel
+                })
+                
+                # Update channel
+                voice_sessions[user_id]["channel_id"] = str(after.channel.id)
+                voice_channels[user_id] = str(after.channel.id)
+                
+                # Reset state with new start time (state may be the same but we're in a new channel)
+                voice_sessions[user_id]["state_start_time"] = current_time
             
             # If user was streaming and changed channels, update both channels
             if before.self_stream:
@@ -287,88 +423,66 @@ async def handle_voice_state_update(bot, member, before, after):
             before.self_stream != after.self_stream or
             getattr(before, 'self_video', False) != getattr(after, 'self_video', False)):
             
-            # State changed, finalize the previous state's XP
-            if user_id in vc_states:
-                previous_state = vc_states[user_id]["state"]
-                state_start_time = vc_states[user_id]["since"]
-                state_duration = time.time() - state_start_time
-                minutes_spent = int(state_duration // 60)
+            # State changed, record the previous state's duration
+            if user_id in voice_sessions:
+                previous_state = voice_sessions[user_id]["current_state"]
+                state_start_time = voice_sessions[user_id]["state_start_time"]
                 
-                # Get the channel_id for applying the boost
-                channel_id = voice_channels.get(user_id)
+                # Add to state history
+                if "state_history" not in voice_sessions[user_id]:
+                    voice_sessions[user_id]["state_history"] = []
                 
-                if minutes_spent > 0:
-                    await get_or_create_user_level(guild_id, user_id)
-                    base_xp = minutes_spent * XP_RATES[previous_state]
-                    
-                    # Apply channel boost if channel_id is available
-                    if channel_id:
-                        xp_earned = apply_channel_boost(base_xp, channel_id)
-                        logging.info(f"Voice state change XP with channel boost: Base XP: {base_xp}, Boosted XP: {xp_earned}, Channel: {channel_id}")
-                    else:
-                        xp_earned = base_xp
-                        logging.info(f"Voice state change XP without boost: {xp_earned}")
-                        
-                    await award_xp_and_handle_level_up(guild_id, user_id, xp_earned, member)
+                voice_sessions[user_id]["state_history"].append({
+                    "state": previous_state,
+                    "start": state_start_time,
+                    "end": current_time,
+                    "channel_id": voice_sessions[user_id]["channel_id"]
+                })
             
-            # Update to new state
-            new_state = determine_voice_state(after)
-            vc_states[user_id] = {
-                "state": new_state,
-                "since": time.time()
-            }
-            
-            # If user is now deafened, they can't be watching a stream
-            if new_state == "muted" and user_id in stream_watchers:
-                del stream_watchers[user_id]
+                # Update to new state
+                new_state = determine_voice_state(after)
+                voice_sessions[user_id]["current_state"] = new_state
+                voice_sessions[user_id]["state_start_time"] = current_time
+                
+                # If user is now deafened, they can't be watching a stream
+                if new_state == "muted" and user_id in stream_watchers:
+                    del stream_watchers[user_id]
 
 async def handle_voice_speaking_update(member, speaking):
     """Handle voice speaking update events"""
     user_id = str(member.id)
+    current_time = time.time()
+    
     if speaking:
         # Update the last time this user spoke
-        last_spoke[user_id] = time.time()
+        last_spoke[user_id] = current_time
         
         # If they were idle, change state to active (but don't change if watching or streaming)
-        if user_id in vc_states and vc_states[user_id]["state"] == "idle":
-            # Calculate XP for idle time
-            idle_start = vc_states[user_id]["since"]
-            idle_duration = time.time() - idle_start
-            idle_minutes = int(idle_duration // 60)
+        if user_id in voice_sessions and voice_sessions[user_id]["current_state"] == "idle":
+            # Record the idle state duration
+            if "state_history" not in voice_sessions[user_id]:
+                voice_sessions[user_id]["state_history"] = []
             
-            # Get the channel_id for applying the boost
-            channel_id = voice_channels.get(user_id)
-            
-            if idle_minutes > 0:
-                guild_id = str(member.guild.id)
-                await get_or_create_user_level(guild_id, user_id)
-                base_xp = idle_minutes * XP_RATES["idle"]
-                
-                # Apply channel boost if channel_id is available
-                if channel_id:
-                    xp_earned = apply_channel_boost(base_xp, channel_id)
-                    logging.info(f"Idle to active XP with channel boost: Base XP: {base_xp}, Boosted XP: {xp_earned}, Channel: {channel_id}")
-                else:
-                    xp_earned = base_xp
-                    logging.info(f"Idle to active XP without boost: {xp_earned}")
-                    
-                await award_xp_and_handle_level_up(guild_id, user_id, xp_earned, member)
+            voice_sessions[user_id]["state_history"].append({
+                "state": "idle",
+                "start": voice_sessions[user_id]["state_start_time"],
+                "end": current_time,
+                "channel_id": voice_sessions[user_id]["channel_id"]
+            })
             
             # Update to active state (only if not watching a stream)
             if user_id not in stream_watchers:
-                vc_states[user_id] = {
-                    "state": "active",
-                    "since": time.time()
-                }
+                voice_sessions[user_id]["current_state"] = "active"
+                voice_sessions[user_id]["state_start_time"] = current_time
 
 @tasks.loop(minutes=1)
 async def check_idle_users(bot):
     """Check for users who have gone idle"""
     current_time = time.time()
     
-    for user_id, state_info in list(vc_states.items()):
+    for user_id, session in list(voice_sessions.items()):
         # Skip users who are already idle, muted, streaming, or watching
-        if state_info["state"] in ["idle", "muted", "streaming", "watching"]:
+        if session["current_state"] in ["idle", "muted", "streaming", "watching"]:
             continue
         
         # Check if user hasn't spoken in the threshold time
@@ -388,30 +502,18 @@ async def check_idle_users(bot):
                         break
                 
                 if guild_id and member:
-                    # Calculate XP for active time
-                    active_start = state_info["since"]
-                    active_duration = current_time - active_start
-                    active_minutes = int(active_duration // 60)
+                    # Record the active state duration
+                    if "state_history" not in session:
+                        session["state_history"] = []
                     
-                    # Get the channel_id for applying the boost
-                    channel_id = voice_channels.get(user_id)
-                    
-                    if active_minutes > 0:
-                        await get_or_create_user_level(guild_id, user_id)
-                        base_xp = active_minutes * XP_RATES["active"]
-                        
-                        # Apply channel boost if channel_id is available
-                        if channel_id:
-                            xp_earned = apply_channel_boost(base_xp, channel_id)
-                            logging.info(f"Active to idle XP with channel boost: Base XP: {base_xp}, Boosted XP: {xp_earned}, Channel: {channel_id}")
-                        else:
-                            xp_earned = base_xp
-                            logging.info(f"Active to idle XP without boost: {xp_earned}")
-                            
-                        await award_xp_and_handle_level_up(guild_id, user_id, xp_earned, member)
+                    session["state_history"].append({
+                        "state": "active",
+                        "start": session["state_start_time"],
+                        "end": current_time,
+                        "channel_id": session["channel_id"]
+                    })
                     
                     # Update to idle state
-                    vc_states[user_id] = {
-                        "state": "idle",
-                        "since": current_time
-                    }
+                    session["current_state"] = "idle"
+                    session["state_start_time"] = current_time
+                    logging.info(f"User {member.display_name} is now idle after {time_since_last_spoke:.1f} seconds of inactivity")
