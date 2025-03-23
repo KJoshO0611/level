@@ -1,6 +1,11 @@
-import discord
 import random
 import time
+import logging
+
+import discord
+
+from config import load_config
+from utils.performance_monitoring import time_function
 from modules.databasev2 import (
     get_or_create_user_level, 
     update_user_xp, 
@@ -10,10 +15,6 @@ from modules.databasev2 import (
     get_or_create_user_level,
     get_active_xp_boost_events
 )
-
-import logging
-from config import load_config
-from utils.performance_monitoring import time_function
 
 config = load_config()
 XP_SETTINGS = config["XP_SETTINGS"]

@@ -1,8 +1,10 @@
-import discord
 import time
 import logging
 import asyncio
+
+import discord
 from discord.ext import tasks
+
 from config import load_config
 from utils.performance_monitoring import time_function
 from modules.databasev2 import get_or_create_user_level, apply_channel_boost

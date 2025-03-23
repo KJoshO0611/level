@@ -4,12 +4,28 @@ import calendar
 import io
 import math
 import logging
-import asyncio
 import time
+import os
+import asyncio
+import tempfile
 from datetime import datetime, timedelta
 from utils.cairo_image_generator import (
     get_font, optimized_draw_text, measure_text_size, TEMPLATE_CACHE
 )
+
+# Create a dedicated calendar cache directory
+CALENDAR_CACHE_DIR = os.path.join(tempfile.gettempdir(), "calendar_cache")
+os.makedirs(CALENDAR_CACHE_DIR, exist_ok=True)
+print(f"Calendar cache location: {CALENDAR_CACHE_DIR}")
+
+def _get_calendar_template_path(year, month):
+    """Get the path for a cached calendar template"""
+    return os.path.join(CALENDAR_CACHE_DIR, f"calendar_template_{year}_{month}.png")
+
+def _is_template_cached(year, month):
+    """Check if a template exists for this year/month"""
+    template_path = _get_calendar_template_path(year, month)
+    return os.path.exists(template_path) and os.path.getsize(template_path) > 0
 
 def _generate_event_calendar_cairo_sync(guild_name, year, month, events, language="en"):
     """
@@ -35,8 +51,7 @@ def _generate_event_calendar_cairo_sync(guild_name, year, month, events, languag
     - BytesIO: The generated calendar image
     """
     # Check if we have a cached template for this month/year
-    cache_key = f"calendar_template_{year}_{month}"
-    cached_template = TEMPLATE_CACHE.get(cache_key)
+    has_cached_template = _is_template_cached(year, month)
     # Calendar dimensions and settings
     width = 900
     height = 720
@@ -66,34 +81,39 @@ def _generate_event_calendar_cairo_sync(guild_name, year, month, events, languag
     day_font_size = 16
     event_font_size = 14
     
-    # Create surface and context
-    surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, width, height)
-    ctx = cairo.Context(surface)
-    
     # If we have a cached template, use it as the base
-    if cached_template:
+    if has_cached_template:
         logging.info(f"Using cached calendar template for {month}/{year}")
-        # Create a new surface from the cached template bytes
+        # Create a new surface from the cached template file
         try:
-            # Reset the BytesIO position
-            cached_template.seek(0)
             # Load the template as a new surface
-            template_surface = cairo.ImageSurface.create_from_png(cached_template)
-            # Draw it onto our current surface
+            template_path = _get_calendar_template_path(year, month)
+            template_surface = cairo.ImageSurface.create_from_png(template_path)
+            
+            # Create our working surface
+            surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, width, height)
+            ctx = cairo.Context(surface)
+            
+            # Draw the template onto our surface
             ctx.set_source_surface(template_surface, 0, 0)
             ctx.paint()
+            
             # Clean up the template surface
             del template_surface
         except Exception as e:
             logging.error(f"Error loading cached template: {e}")
             # Fall back to creating from scratch
+            surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, width, height)
+            ctx = cairo.Context(surface)
             ctx.set_source_rgb(*bg_color)
             ctx.rectangle(0, 0, width, height)
             ctx.fill()
-            cached_template = None  # Reset so we rebuild everything
+            has_cached_template = False  # Reset so we rebuild everything
     else:
         # Fill background and create from scratch
         logging.info(f"No cached template for {month}/{year}, creating new")
+        surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, width, height)
+        ctx = cairo.Context(surface)
         ctx.set_source_rgb(*bg_color)
         ctx.rectangle(0, 0, width, height)
         ctx.fill()
@@ -103,7 +123,7 @@ def _generate_event_calendar_cairo_sync(guild_name, year, month, events, languag
     title_font = get_font(None, title_font_size)
     title_width, _ = measure_text_size(cal, title_font)
     
-    if not cached_template:
+    if not has_cached_template:
         optimized_draw_text(
             ctx,
             cal,
@@ -148,7 +168,7 @@ def _generate_event_calendar_cairo_sync(guild_name, year, month, events, languag
     weekday_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]  
     # For localization, replace with appropriate names based on language parameter
     
-    if not cached_template:
+    if not has_cached_template:
         for i, day_name in enumerate(weekday_names):
             day_x = margin + i * cell_width + cell_width / 2
             day_y = grid_top - 15
@@ -214,7 +234,7 @@ def _generate_event_calendar_cairo_sync(guild_name, year, month, events, languag
             cell_x = margin + day_idx * cell_width
             cell_y = grid_top + week_idx * cell_height
             
-            if not cached_template:
+            if not has_cached_template:
                 # Draw cell background
                 if day != 0:  # Skip padding days (0)
                     # Check if it's a weekend
@@ -374,7 +394,7 @@ def _generate_event_calendar_cairo_sync(guild_name, year, month, events, languag
     legend_x = margin + 10
     legend_item_width = 150
     
-    if not cached_template:
+    if not has_cached_template:
         # Title for legend
         optimized_draw_text(
             ctx,
@@ -430,13 +450,12 @@ def _generate_event_calendar_cairo_sync(guild_name, year, month, events, languag
     del surface
     del ctx
     
-    # Cache the generated calendar template for future use
-    # We don't cache the final image with events, but we could cache the base template
+    # Cache the generated calendar template for future use if we created a new one
+    # We don't cache the final image with events, but we cache the base template
     # with the empty grid, headers, etc. for this month/year combination
-    if cached_template is None:
+    if not has_cached_template:
         try:
             # Create a cloned surface without the events, just the base grid and styling
-            # This is what we'll cache for reuse
             template_surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, width, height)
             template_ctx = cairo.Context(template_surface)
             
@@ -536,15 +555,12 @@ def _generate_event_calendar_cairo_sync(guild_name, year, month, events, languag
                     rgb_color=text_color
                 )
             
-            # Cache the template
-            # We need to convert the surface to bytes for storage in the cache
-            template_bytes = io.BytesIO()
-            template_surface.write_to_png(template_bytes)
-            template_bytes.seek(0)
-            TEMPLATE_CACHE.set(cache_key, template_bytes)
-            logging.info(f"Cached calendar template for {month}/{year}")
+            # Save the template to disk
+            template_path = _get_calendar_template_path(year, month)
+            template_surface.write_to_png(template_path)
+            logging.info(f"Cached calendar template for {month}/{year} to {template_path}")
             
-            # Clean up the template resources we just created
+            # Clean up the template resources
             del template_surface
             del template_ctx
         except Exception as e:
