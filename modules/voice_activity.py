@@ -4,22 +4,29 @@ import logging
 import asyncio
 from discord.ext import tasks
 from config import load_config
+from utils.performance_monitoring import time_function
 from modules.databasev2 import get_or_create_user_level, apply_channel_boost
 from modules.levels import award_xp_without_event_multiplier, send_level_up_notification, xp_to_next_level
 
 config = load_config()
 XP_RATES = config["XP_SETTINGS"]["RATES"]
 IDLE_THRESHOLD = config["XP_SETTINGS"]["IDLE_THRESHOLD"]
+LONG_SESSION_THRESHOLD = 30 * 60  # 30 minutes - process sessions longer than this
+INACTIVE_SESSION_THRESHOLD = 3 * 60 * 60  # 3 hours - cleanup after this time
+PERIODIC_PROCESSING_INTERVAL = 15 * 60  # 15 minutes - how often to run processing
+MAX_STATE_HISTORY_ENTRIES = 100  # Maximum state history entries before compacting
 
 # Enhanced tracking dictionaries
 voice_sessions = {}  # Detailed voice session tracking
 last_spoke = {}  # Last time a user was detected as speaking
 voice_channels = {}  # Track which channel a user is in
 stream_watchers = {}  # Track users who are watching streams
+last_processed = {}
 
 async def start_voice_tracking(bot):
     """Start voice activity tracking tasks"""
     check_idle_users.start(bot)
+    await start_periodic_processing(bot)  # Add this line
     return True
 
 def determine_voice_state(voice_state):
@@ -56,6 +63,7 @@ async def get_all_xp_boost_events_for_guild(guild_id):
     
     return all_events
 
+@time_function
 async def calculate_event_adjusted_xp(base_xp, start_time, end_time, events):
     """Calculate XP with consideration for event multipliers during specific time periods"""
     
@@ -238,6 +246,7 @@ def update_stream_watchers(bot, channel, streamer_id=None):
                     voice_sessions[user_id]["state_start_time"] = current_time
                     logging.info(f"User {member.name} is no longer watching a stream, now {new_state}")
 
+@time_function
 async def handle_voice_channel_exit(guild_id, user_id, member):
     """Process XP for a user leaving voice channel, considering their various states"""
     if user_id not in voice_sessions:
@@ -317,6 +326,7 @@ async def handle_voice_channel_exit(guild_id, user_id, member):
     if user_id in last_spoke:
         del last_spoke[user_id]
 
+@time_function(name="Voice_StateUpdate", log_always=True)
 async def handle_voice_state_update(bot, member, before, after):
     """Handle voice state update events"""
     guild_id = str(member.guild.id)
@@ -517,3 +527,207 @@ async def check_idle_users(bot):
                     session["current_state"] = "idle"
                     session["state_start_time"] = current_time
                     logging.info(f"User {member.display_name} is now idle after {time_since_last_spoke:.1f} seconds of inactivity")
+
+@tasks.loop(seconds=PERIODIC_PROCESSING_INTERVAL)
+async def periodic_voice_processing(bot):
+    """
+    Periodically process long voice sessions and clean up inactive ones
+    This task runs every PERIODIC_PROCESSING_INTERVAL seconds
+    """
+    try:
+        current_time = time.time()
+        logging.info(f"Starting periodic voice session processing at {current_time}")
+        
+        # Process long sessions first
+        await process_long_voice_sessions(bot, current_time)
+        
+        # Then clean up inactive sessions
+        cleanup_inactive_sessions(current_time)
+        
+        # Compact oversized session histories
+        compact_large_histories()
+        
+        logging.info(f"Completed periodic voice processing. Active sessions: {len(voice_sessions)}")
+        
+    except Exception as e:
+        logging.error(f"Error in periodic voice processing: {e}")
+
+async def process_long_voice_sessions(bot, current_time):
+    """
+    Award XP for long voice sessions without ending them
+    This allows users to continue their sessions while still earning XP periodically
+    """
+    processed_count = 0
+    
+    for user_id, session in list(voice_sessions.items()):
+        try:
+            # Skip sessions that were recently processed
+            if user_id in last_processed and current_time - last_processed[user_id] < PERIODIC_PROCESSING_INTERVAL:
+                continue
+                
+            # Get the duration of the current state
+            current_state = session["current_state"]
+            state_start_time = session["state_start_time"]
+            state_duration = current_time - state_start_time
+            
+            # Process long sessions
+            if state_duration > LONG_SESSION_THRESHOLD:
+                # Find guild and member
+                guild_id = None
+                member = None
+                
+                for guild in bot.guilds:
+                    member = guild.get_member(int(user_id))
+                    if member:
+                        guild_id = str(guild.id)
+                        break
+                
+                if not guild_id or not member:
+                    continue
+                
+                # Create a temporary state period for current state
+                temp_state_period = {
+                    "state": current_state,
+                    "start": state_start_time,
+                    "end": current_time,
+                    "channel_id": session["channel_id"]
+                }
+                
+                # Get all event information
+                all_events = await get_all_xp_boost_events_for_guild(guild_id)
+                
+                # Calculate XP for the period
+                duration_minutes = int(state_duration // 60)
+                if duration_minutes <= 0:
+                    continue
+                    
+                # Calculate base XP
+                base_xp = duration_minutes * XP_RATES[current_state]
+                
+                # Apply channel boost if applicable
+                channel_id = session["channel_id"]
+                boosted_xp = apply_channel_boost(base_xp, channel_id)
+                
+                # Calculate event-adjusted XP
+                period_xp = await calculate_event_adjusted_xp(
+                    boosted_xp,
+                    state_start_time,
+                    current_time,
+                    all_events
+                )
+                
+                if period_xp > 0:
+                    # Award XP without ending the session
+                    await award_xp_without_event_multiplier(guild_id, user_id, period_xp, member)
+                    logging.info(f"Periodic XP: Awarded {period_xp} XP to {member.name} for long {current_state} session")
+                    
+                    # Update last processed time
+                    last_processed[user_id] = current_time
+                    
+                    # Reset the state start time to now to avoid double-counting
+                    session["state_start_time"] = current_time
+                    
+                    # Add the processed period to history
+                    if "state_history" not in session:
+                        session["state_history"] = []
+                    
+                    session["state_history"].append(temp_state_period)
+                    
+                    processed_count += 1
+        
+        except Exception as e:
+            logging.error(f"Error processing long voice session for user {user_id}: {e}")
+    
+    logging.info(f"Processed {processed_count} long voice sessions")
+    
+def cleanup_inactive_sessions(current_time):
+    """
+    Remove voice sessions that appear to be inactive or stale
+    This handles cases where voice_state_update events were missed
+    """
+    removed_count = 0
+    
+    for user_id in list(voice_sessions.keys()):
+        try:
+            session = voice_sessions[user_id]
+            state_start_time = session["state_start_time"]
+            
+            # Check if session is too old (inactive)
+            if current_time - state_start_time > INACTIVE_SESSION_THRESHOLD:
+                # Clean up all tracking for this user
+                del voice_sessions[user_id]
+                if user_id in voice_channels:
+                    del voice_channels[user_id]
+                if user_id in stream_watchers:
+                    del stream_watchers[user_id]
+                if user_id in last_spoke:
+                    del last_spoke[user_id]
+                if user_id in last_processed:
+                    del last_processed[user_id]
+                    
+                removed_count += 1
+                logging.info(f"Removed inactive voice session for user {user_id} (inactive for {(current_time - state_start_time) / 3600:.1f} hours)")
+        
+        except Exception as e:
+            logging.error(f"Error cleaning up voice session for user {user_id}: {e}")
+    
+    logging.info(f"Removed {removed_count} inactive voice sessions")
+
+def compact_large_histories():
+    """
+    Compact large state histories to prevent memory issues
+    This combines consecutive states of the same type
+    """
+    compacted_count = 0
+    
+    for user_id, session in voice_sessions.items():
+        try:
+            # Skip if no history or history is small
+            if "state_history" not in session or len(session["state_history"]) < MAX_STATE_HISTORY_ENTRIES:
+                continue
+            
+            history = session["state_history"]
+            new_history = []
+            
+            # Try to compact by combining consecutive identical states
+            if len(history) > 0:
+                current_group = history[0].copy()
+                
+                for i in range(1, len(history)):
+                    entry = history[i]
+                    
+                    # If same state and channel, combine them
+                    if (entry["state"] == current_group["state"] and 
+                        entry["channel_id"] == current_group["channel_id"]):
+                        # Extend the end time
+                        current_group["end"] = entry["end"]
+                    else:
+                        # Different state or channel, add the current group and start a new one
+                        new_history.append(current_group)
+                        current_group = entry.copy()
+                
+                # Add the last group
+                new_history.append(current_group)
+            
+            # Replace with compacted history if we saved space
+            if len(new_history) < len(history):
+                session["state_history"] = new_history
+                compacted_count += 1
+                logging.debug(f"Compacted voice history for user {user_id}: {len(history)} → {len(new_history)} entries")
+        
+        except Exception as e:
+            logging.error(f"Error compacting voice history for user {user_id}: {e}")
+    
+    if compacted_count > 0:
+        logging.info(f"Compacted {compacted_count} voice session histories")
+
+async def start_periodic_processing(bot):
+    """Start the periodic processing task"""
+    periodic_voice_processing.start(bot)
+    logging.info("Started periodic voice session processing task")
+
+def stop_periodic_processing():
+    """Stop the periodic processing task"""
+    if periodic_voice_processing.is_running():
+        periodic_voice_processing.cancel()
+        logging.info("Stopped periodic voice session processing task")

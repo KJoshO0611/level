@@ -22,9 +22,11 @@ from modules.levels import handle_message_xp
 from modules.levels import handle_reaction_xp
 from modules.databasev2 import init_db, close_db
 from utils.background_api import BACKGROUNDS_DIR
+from modules.voice_activity import stop_periodic_processing
 from modules.voice_activity import handle_voice_state_update
 from utils.async_image_processor import start_image_processor
 from modules.voice_activity import start_voice_tracking, handle_voice_state_update
+from utils.performance_monitoring import start_monitoring, stop_monitoring, time_function
 
 # Configure logging
 logging.basicConfig(
@@ -120,6 +122,9 @@ def run_bot():
         avatar_cache.start_cleanup_task(bot.loop)
         logging.info(f"Avatar cache initialized (max size: {avatar_cache.max_size})")
         
+        await start_monitoring(bot)
+        logging.info("Performance monitoring started")
+
         bot.loop.run_in_executor(
             bot.image_thread_pool, 
             initialize_image_templates,
@@ -301,6 +306,12 @@ def run_bot():
             if hasattr(bot, 'session') and not bot.session.closed:
                 logging.info("Closing HTTP sessions...")
                 await bot.session.close()
+            
+            stop_periodic_processing()
+            logging.info("Stopping processing...")
+
+            stop_monitoring()
+            logging.info("Stopping monitoring...")
             
             # Log completion
             logging.info("Cleanup process complete. Exiting gracefully.")

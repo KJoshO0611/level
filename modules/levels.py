@@ -11,8 +11,9 @@ from modules.databasev2 import (
     get_active_xp_boost_events
 )
 
-from config import load_config
 import logging
+from config import load_config
+from utils.performance_monitoring import time_function
 
 config = load_config()
 XP_SETTINGS = config["XP_SETTINGS"]
@@ -37,6 +38,7 @@ async def get_event_xp_multiplier(guild_id: str) -> float:
     max_multiplier = max(event["multiplier"] for event in active_events)
     return max_multiplier
 
+@time_function
 async def award_xp_and_handle_level_up(guild_id, user_id, xp_amount, member, update_last_xp_time=False):
     """
     Awards XP to a user, handles level-up logic, and sends level-up notifications.
@@ -144,6 +146,7 @@ async def award_xp_and_handle_level_up(guild_id, user_id, xp_amount, member, upd
     
     return (xp, level, leveled_up)
 
+@time_function
 async def award_xp_without_event_multiplier(guild_id, user_id, xp_amount, member, update_last_xp_time=False):
     """
     Awards XP to a user, handles level-up logic, and sends level-up notifications.
@@ -277,6 +280,7 @@ async def send_level_up_notification(guild_id, member, level):
         else:
             logging.info(f"No level-up channel configured and no system channel available for guild {guild_id}")
 
+@time_function
 async def handle_message_xp(message, bot=None):
     """Handle XP awarding for messages"""
     # Ignore messages from bots

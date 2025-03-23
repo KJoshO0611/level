@@ -1,9 +1,13 @@
 import discord
 import time
 import logging
+import psutil
+import os
 from datetime import datetime
 from discord import app_commands
 from discord.ext import commands, tasks
+from modules.voice_activity import voice_sessions
+from utils.performance_monitoring import performance_data
 from utils.cairo_image_generator import get_text_rendering_stats
 from modules.databasev2 import (
     get_health_stats, 
@@ -18,6 +22,12 @@ from modules.databasev2 import (
     get_level_up_channel,
     CHANNEL_XP_BOOSTS
 )
+
+try:
+    import psutil
+    PSUTIL_AVAILABLE = True
+except ImportError:
+    PSUTIL_AVAILABLE = False
 
 class AdminCommands(commands.Cog):
     def __init__(self, bot):
@@ -469,6 +479,108 @@ class AdminCommands(commands.Cog):
                 )
             
             await ctx.send(embed=embed)
+
+    @commands.command(name="performance", hidden=True)
+    @commands.has_permissions(administrator=True)
+    async def performance_status(ctx):
+        """Show performance metrics for the bot"""
+        if not PSUTIL_AVAILABLE:
+            psutil_status = "⚠️ psutil not installed (memory metrics unavailable)"
+        else:
+            psutil_status = "✅ psutil available (memory metrics enabled)"
+            
+        # Create an embed with performance data
+        embed = discord.Embed(
+            title="🔍 Performance Monitoring",
+            description="Current performance metrics for the bot",
+            color=discord.Color.blue()
+        )
+        
+        # Memory metrics
+        if PSUTIL_AVAILABLE:
+            process = psutil.Process(os.getpid())
+            memory_info = process.memory_info()
+            memory_mb = memory_info.rss / 1024 / 1024
+            
+            embed.add_field(
+                name="Memory Usage",
+                value=f"Current: {memory_mb:.2f} MB\nPeak: {performance_data['peak_memory']:.2f} MB",
+                inline=True
+            )
+            
+            # CPU usage
+            cpu_percent = process.cpu_percent(interval=0.5)
+            embed.add_field(
+                name="CPU Usage",
+                value=f"Current: {cpu_percent:.1f}%",
+                inline=True
+            )
+        
+        # Voice session metrics
+        try:
+            
+            total_sessions = len(voice_sessions)
+            total_history = sum(
+                len(session.get("state_history", [])) 
+                for session in voice_sessions.values()
+            )
+            
+            embed.add_field(
+                name="Voice Sessions",
+                value=f"Active: {total_sessions}\nHistory entries: {total_history}",
+                inline=True
+            )
+        except:
+            embed.add_field(
+                name="Voice Sessions",
+                value="Unable to retrieve voice session data",
+                inline=True
+            )
+        
+        # Function timing metrics
+        if performance_data["function_times"]:
+            # Sort by average time
+            sorted_funcs = sorted(
+                performance_data["function_times"].items(),
+                key=lambda x: x[1]["total_ms"] / x[1]["count"],
+                reverse=True
+            )
+            
+            # Show top 5 slowest functions
+            timing_text = "\n".join([
+                f"`{name}`: {data['total_ms']/data['count']:.1f}ms avg ({data['count']} calls)"
+                for name, data in sorted_funcs[:5]
+            ])
+            
+            embed.add_field(
+                name="Slowest Functions (Average)",
+                value=timing_text,
+                inline=False
+            )
+        
+        # Recent slow operations
+        if performance_data["slow_operations"]:
+            recent_slow = sorted(
+                performance_data["slow_operations"],
+                key=lambda x: x["timestamp"],
+                reverse=True
+            )[:5]
+            
+            slow_text = "\n".join([
+                f"`{op['function']}`: {op['time_ms']:.1f}ms"
+                for op in recent_slow
+            ])
+            
+            embed.add_field(
+                name="Recent Slow Operations",
+                value=slow_text,
+                inline=False
+            )
+        
+        # Add footer with dependencies
+        embed.set_footer(text=f"Monitoring status: {psutil_status}")
+        
+        await ctx.send(embed=embed)
 
     #slash command
     @app_commands.command(name="xpboost", description="Set an XP boost multiplier for a channel")
