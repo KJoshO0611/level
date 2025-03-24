@@ -2,6 +2,7 @@ import logging
 import asyncio
 import discord
 from datetime import datetime
+import time
 from modules.databasev2 import (
     update_activity_counter_db,
     get_user_achievements_db,
@@ -132,7 +133,7 @@ async def voice_state_update_achievement_listener(member, before, after):
         session_info = voice_sessions.get(user_id)
         if session_info and session_info.get("state_start_time"):
             session_start = session_info["state_start_time"]
-            session_end = datetime.utcnow().timestamp()
+            session_end = time.time()
             session_duration = int(session_end - session_start)
             logging.info(f"{session_end} | {session_start}")
             logging.info(f"{member.name} left voice channel {before.channel.name} after {session_duration} seconds")
