@@ -134,6 +134,7 @@ async def voice_state_update_achievement_listener(member, before, after):
             session_start = session_info["state_start_time"]
             session_end = datetime.utcnow().timestamp()
             session_duration = int(session_end - session_start)
+            logging.info(f"{session_end} | {session_start}")
             logging.info(f"{member.name} left voice channel {before.channel.name} after {session_duration} seconds")
             
             await process_voice_time_achievement(guild_id, user_id, session_duration, member)
