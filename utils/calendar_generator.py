@@ -97,6 +97,8 @@ def _generate_event_calendar_cairo_sync(guild_name, year, month, events, languag
         5.0: (0.7, 0.1, 0.1),  # Red - highest
     }
     
+    calendar.setfirstweekday(6)  # 6 = Sunday
+
     # Get the calendar info for this month
     month_calendar = calendar.monthcalendar(year, month)
     num_weeks = len(month_calendar)
@@ -234,19 +236,31 @@ def _generate_event_calendar_cairo_sync(guild_name, year, month, events, languag
         month_name = calendar.month_name[month]
         cal_title = f"{month_name} {year}"
         
+        # Calculate text dimensions for proper centering
+        title_font = get_font(None, p["title_font_size"])
+        title_width, title_height = measure_text_size(cal_title, title_font)
+
+        title_center_x = p["width"]/2
+        title_start_x = title_center_x - title_width/2
+
+        # Clear the title area to be safe
+        ctx.set_source_rgb(*p["bg_color"])
+        ctx.rectangle(0, 30, p["width"], 40)
+        ctx.fill()
+
         # Draw calendar title with fixed vertical position
         optimized_draw_text(
             ctx,
             cal_title,
-            p["width"]/1.7,  # Horizontally centered
-            50,            # Fixed vertical position
+            title_start_x,  # Horizontally centered
+            20,            # Fixed vertical position
             size=p["title_font_size"],
             rgb_color=p["text_color"],
-            centered=True
+            centered=False
         )
         
         # Draw weekday headers
-        weekday_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]  
+        weekday_names = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]  
         # For localization, replace with appropriate names based on language parameter
         
         grid_top = p["margin"] + p["header_height"] + p["day_header_height"]
@@ -270,23 +284,47 @@ def _generate_event_calendar_cairo_sync(guild_name, year, month, events, languag
                 centered=True
             )
     
-    # Draw subtitle with fixed position
-    guild_subtitle = f"XP Events Calendar - {guild_name}"
-    
-    # Clear the area where the subtitle will go
+    # Draw subtitle with fixed position - split into two lines
+    calendar_text = "XP Events Calendar"
+    guild_text = guild_name
+
+    # Calculate text dimensions to ensure proper centering
+    calendar_text_font = get_font(None, p["subtitle_font_size"])
+    guild_text_font = get_font(None, p["subtitle_font_size"])
+    calendar_text_width, calendar_text_height = measure_text_size(calendar_text, calendar_text_font)
+    guild_text_width, guild_text_height = measure_text_size(guild_text, guild_text_font)
+
+    # Clear the entire subtitle area
     ctx.set_source_rgb(*p["bg_color"])
-    ctx.rectangle(p["width"]/2 - 200, 75, 400, 30)
+    ctx.rectangle(0, 65, p["width"], 50)
     ctx.fill()
-    
-    # Fixed position for subtitle
+
+    # Calculate true center positions
+    calendar_center_x = p["width"]/2
+    guild_center_x = p["width"]/2
+
+    # For the first line - explicitly position for centering
+    calendar_text_x = calendar_center_x - calendar_text_width/2
     optimized_draw_text(
         ctx,
-        guild_subtitle,
-        p["width"]/1.7,
-        75,  # Fixed vertical position
+        calendar_text,
+        calendar_text_x,  # Start position is center minus half the width
+        65,
         size=p["subtitle_font_size"],
         rgb_color=p["text_color"],
-        centered=True
+        centered=False  # We're handling centering manually
+    )
+
+    # For the second line - explicitly position for centering
+    guild_text_x = guild_center_x - guild_text_width/2
+    optimized_draw_text(
+        ctx,
+        guild_text,
+        guild_text_x,  # Start position is center minus half the width
+        85,
+        size=p["subtitle_font_size"],
+        rgb_color=p["text_color"],
+        centered=False  # We're handling centering manually
     )
     
     # Calculate calendar grid dimensions 
@@ -527,20 +565,33 @@ def _generate_event_calendar_cairo_sync(guild_name, year, month, events, languag
             # Define calendar title
             month_name = calendar.month_name[month]
             cal_title = f"{month_name} {year}"
+
+            # Calculate text dimensions for proper centering
+            title_font = get_font(None, p["title_font_size"])
+            title_width, title_height = measure_text_size(cal_title, title_font)
             
+            # Calculate the starting position for true centering
+            title_center_x = p["width"]/2
+            title_start_x = title_center_x - title_width/2
+
+            # Clear the title area to be safe
+            template_ctx.set_source_rgb(*p["bg_color"])
+            template_ctx.rectangle(0, 30, p["width"], 40)
+            template_ctx.fill()
+
             # Draw calendar title with fixed position in template
             optimized_draw_text(
                 template_ctx,
                 cal_title,
-                p["width"]/2,
-                50,  # Fixed vertical position
+                title_start_x,
+                20,  # Fixed vertical position
                 size=p["title_font_size"],
                 rgb_color=p["text_color"],
-                centered=True
+                centered=False
             )
             
             # Draw weekday headers
-            weekday_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+            weekday_names = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"] 
             
             grid_top = p["margin"] + p["header_height"] + p["day_header_height"]
             grid_width = p["width"] - 2 * p["margin"]
