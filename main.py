@@ -40,7 +40,8 @@ try:
     from modules.databasev2 import init_db, close_db
     from modules.voice_activity import start_voice_tracking, stop_periodic_processing
     from modules.levels import handle_message_xp, handle_reaction_xp
-
+    from modules.achievements import register_achievement_hooks
+    
     from utils.async_image_processor import start_image_processor
     from utils.image_templates import initialize_image_templates
     from utils.avatar_cache import avatar_cache
@@ -150,6 +151,9 @@ async def initialize_services(bot):
     root_logger.info("Starting voice tracking...")
     await start_voice_tracking(bot)
     
+    root_logger.info("Registering achivement hooks...")    
+    register_achievement_hooks(bot)
+
     # Start image processor
     root_logger.info("Starting image processor...")
     await start_image_processor(bot)

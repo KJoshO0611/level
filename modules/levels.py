@@ -72,7 +72,7 @@ async def award_xp_and_handle_level_up(guild_id, user_id, xp_amount, member, upd
         xp -= xp_to_next_level(level)
         level += 1
         leveled_up = True
-    
+        
     # Update database - only update last_xp_time if specified
     current_time = time.time()
     if update_last_xp_time:

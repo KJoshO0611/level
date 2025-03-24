@@ -194,6 +194,31 @@ async def _create_tables(bot):
                     active BOOLEAN DEFAULT TRUE
                 )
             ''')
+            
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS achievements (
+                    id SERIAL PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    description TEXT NOT NULL,
+                    requirement_type TEXT NOT NULL,
+                    requirement_value INTEGER NOT NULL,
+                    icon_path TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS user_achievements (
+                    id SERIAL PRIMARY KEY,
+                    guild_id TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    achievement_id INTEGER REFERENCES achievements(id),
+                    progress INTEGER NOT NULL DEFAULT 0,
+                    completed BOOLEAN DEFAULT FALSE,
+                    completed_at TIMESTAMP,
+                    UNIQUE(guild_id, user_id, achievement_id)
+                )
+            ''')
 
 
             # Create indexes for frequently queried columns
@@ -202,6 +227,9 @@ async def _create_tables(bot):
                 CREATE INDEX IF NOT EXISTS idx_levels_guild_level ON levels(guild_id, level);
                 CREATE INDEX IF NOT EXISTS idx_xp_events_guild_time ON xp_boost_events(guild_id, start_time, end_time);
                 CREATE INDEX IF NOT EXISTS idx_custom_backgrounds ON custom_backgrounds(guild_id, user_id);
+                CREATE INDEX IF NOT EXISTS idx_achievements_type ON achievements(requirement_type);
+                CREATE INDEX IF NOT EXISTS idx_user_achievements_guild_user ON user_achievements(guild_id, user_id);
+                CREATE INDEX IF NOT EXISTS idx_user_achievements_completed ON user_achievements(completed);
             ''')
 
 # =====================
@@ -465,6 +493,11 @@ async def safe_db_operation(func_name: str, *args, **kwargs):
                 "delete_xp_boost_event": _delete_xp_boost_event,
                 "_set_user_background": _set_user_background,
                 "_remove_user_background": _remove_user_background,
+                "update_activity_counter_internal": _update_activity_counter_internal,
+                "get_user_achievements_internal": _get_user_achievements_internal,
+                "create_achievement_internal": _create_achievement_internal,
+                "get_achievement_leaderboard_internal": _get_achievement_leaderboard_internal,
+                "get_achievement_stats_internal": _get_achievement_stats_internal
             }
             
             if func_name not in function_map:
@@ -548,6 +581,13 @@ async def retry_pending_operations():
                     "reset_server_xp_settings": _reset_server_xp_settings,
                     "create_xp_boost_event": _create_xp_boost_event,
                     "delete_xp_boost_event": _delete_xp_boost_event,
+                    "_set_user_background": _set_user_background,
+                    "_remove_user_background": _remove_user_background,
+                    "update_activity_counter_internal": _update_activity_counter_internal,
+                    "get_user_achievements_internal": _get_user_achievements_internal,
+                    "create_achievement_internal": _create_achievement_internal,
+                    "get_achievement_leaderboard_internal": _get_achievement_leaderboard_internal,
+                    "get_achievement_stats_internal": _get_achievement_stats_internal
                 }
                 
                 if func_name in function_map:
@@ -943,7 +983,7 @@ async def _get_xp_boost_event(event_id: int) -> dict:
     except Exception as e:
         logging.error(f"Error getting XP boost event: {e}")
         return None  
-    
+
 # =====================
 # Public API functions
 # =====================
@@ -1508,6 +1548,514 @@ async def get_event_xp_multiplier(guild_id: str) -> float:
     # Get the highest multiplier from active events
     max_multiplier = max(event["multiplier"] for event in active_events)
     return max_multiplier
+
+# =====================
+# Acchivement System
+# =====================
+
+async def _update_activity_counter(conn, guild_id: str, user_id: str, counter_type: str, increment: int = 1) -> int:
+    """
+    Internal function to update an activity counter in the database
+    
+    Parameters:
+    - conn: Database connection
+    - guild_id: The guild ID
+    - user_id: The user ID
+    - counter_type: Type of counter to update (total_messages, total_reactions, voice_time_seconds, etc.)
+    - increment: Amount to increment by
+    
+    Returns:
+    - int: New counter value
+    """
+    query = f"""
+    UPDATE levels 
+    SET {counter_type} = COALESCE({counter_type}, 0) + $1
+    WHERE guild_id = $2 AND user_id = $3
+    RETURNING {counter_type}
+    """
+    
+    try:
+        new_value = await conn.fetchval(query, increment, guild_id, user_id)
+        logging.debug(f"Updated {counter_type} for user {user_id} in guild {guild_id} by {increment} to {new_value}")
+        return new_value
+    except Exception as e:
+        logging.error(f"Error updating activity counter {counter_type}: {e}")
+        return -1  # Error indicator
+
+async def _get_relevant_achievements(conn, counter_type: str, value: int) -> list:
+    """
+    Internal function to get relevant achievements for a counter type and value
+    
+    Parameters:
+    - conn: Database connection
+    - counter_type: Type of counter (total_messages, total_reactions, etc.)
+    - value: Current counter value
+    
+    Returns:
+    - List of achievement dictionaries that match the criteria
+    """
+    query = """
+    SELECT id, name, description, requirement_type, requirement_value, icon_path
+    FROM achievements
+    WHERE requirement_type = $1 
+    AND requirement_value <= $2
+    ORDER BY requirement_value DESC
+    """
+    
+    try:
+        rows = await conn.fetch(query, counter_type, value)
+        return [dict(row) for row in rows]
+    except Exception as e:
+        logging.error(f"Error fetching relevant achievements: {e}")
+        return []
+
+async def _check_user_achievement_status(conn, guild_id: str, user_id: str, achievement_id: int) -> tuple:
+    """
+    Internal function to check if user already has an achievement
+    
+    Returns:
+    - Tuple of (has_record, is_completed)
+    """
+    query = """
+    SELECT completed
+    FROM user_achievements
+    WHERE guild_id = $1 AND user_id = $2 AND achievement_id = $3
+    """
+    
+    try:
+        row = await conn.fetchrow(query, guild_id, user_id, achievement_id)
+        if row:
+            return True, row['completed']
+        return False, False
+    except Exception as e:
+        logging.error(f"Error checking achievement status: {e}")
+        return False, False
+
+async def _update_user_achievement(conn, guild_id: str, user_id: str, achievement_id: int, 
+                                 progress: int, completed: bool) -> bool:
+    """
+    Internal function to insert or update a user achievement
+    
+    Returns:
+    - bool: True if successful, False otherwise
+    """
+    # If completed, set completed_at timestamp, otherwise set to NULL
+    completed_at = 'CURRENT_TIMESTAMP' if completed else 'NULL'
+    
+    query = f"""
+    INSERT INTO user_achievements 
+        (guild_id, user_id, achievement_id, progress, completed, completed_at)
+    VALUES 
+        ($1, $2, $3, $4, $5, {completed_at})
+    ON CONFLICT (guild_id, user_id, achievement_id) 
+    DO UPDATE SET 
+        progress = $4,
+        completed = $5,
+        completed_at = CASE WHEN 
+            user_achievements.completed = false AND $5 = true 
+            THEN CURRENT_TIMESTAMP 
+            ELSE user_achievements.completed_at 
+        END
+    RETURNING id
+    """
+    
+    try:
+        result = await conn.fetchval(query, guild_id, user_id, achievement_id, progress, completed)
+        return result is not None
+    except Exception as e:
+        logging.error(f"Error updating user achievement: {e}")
+        return False
+
+async def _get_newly_completed_achievements(conn, guild_id: str, user_id: str, 
+                                         time_window: int = 10) -> list:
+    """
+    Internal function to get achievements that were just completed
+    
+    Parameters:
+    - conn: Database connection
+    - guild_id: The guild ID
+    - user_id: The user ID
+    - time_window: Number of seconds to look back for "newly" completed
+    
+    Returns:
+    - List of newly completed achievements
+    """
+    query = """
+    SELECT a.id, a.name, a.description, a.requirement_type, a.requirement_value, a.icon_path, 
+           ua.completed_at, ua.progress
+    FROM user_achievements ua
+    JOIN achievements a ON ua.achievement_id = a.id
+    WHERE ua.guild_id = $1 
+    AND ua.user_id = $2 
+    AND ua.completed = true
+    AND ua.completed_at > CURRENT_TIMESTAMP - INTERVAL '$3 seconds'
+    """
+    
+    try:
+        rows = await conn.fetch(query, guild_id, user_id, time_window)
+        return [dict(row) for row in rows]
+    except Exception as e:
+        logging.error(f"Error fetching newly completed achievements: {e}")
+        return []
+
+async def _check_achievements_internal(conn, guild_id: str, user_id: str, 
+                                    counter_type: str, value: int) -> list:
+    """
+    Internal function to check and update achievements for a user
+    
+    Parameters:
+    - conn: Database connection 
+    - guild_id: The guild ID
+    - user_id: The user ID
+    - counter_type: Type of counter being updated
+    - value: New counter value
+    
+    Returns:
+    - List of newly completed achievements
+    """
+    # Get all relevant achievements for this counter type and value
+    achievements = await _get_relevant_achievements(conn, counter_type, value)
+    
+    # Process each achievement
+    for achievement in achievements:
+        # Check if user already has this achievement
+        has_record, already_completed = await _check_user_achievement_status(
+            conn, guild_id, user_id, achievement['id']
+        )
+        
+        # If already completed, skip
+        if already_completed:
+            continue
+        
+        # Check if the achievement is completed now
+        is_completed = value >= achievement['requirement_value']
+        
+        # Update or insert progress
+        await _update_user_achievement(
+            conn, guild_id, user_id, achievement['id'], value, is_completed
+        )
+    
+    # Return newly completed achievements
+    return await _get_newly_completed_achievements(conn, guild_id, user_id)
+
+# Public Database API functions
+
+async def update_activity_counter_db(guild_id: str, user_id: str, counter_type: str, increment: int = 1) -> tuple:
+    """
+    Update an activity counter and check for completed achievements
+    
+    Parameters:
+    - guild_id: The guild ID
+    - user_id: The user ID
+    - counter_type: Type of counter (total_messages, total_reactions, voice_time_seconds, etc.)
+    - increment: Amount to increment by
+    
+    Returns:
+    - Tuple of (new counter value, list of newly completed achievements)
+    """
+    return await safe_db_operation("update_activity_counter_internal", guild_id, user_id, counter_type, increment)
+    
+async def _update_activity_counter_internal(guild_id: str, user_id: str, counter_type: str, increment: int = 1):
+    """Internal function for updating activity counter with safe_db_operation"""
+    try:
+        async with get_connection() as conn:
+            # First, make sure the user exists in the levels table
+            user_check_query = """
+            SELECT 1 FROM levels 
+            WHERE guild_id = $1 AND user_id = $2
+            """
+            user_exists = await conn.fetchval(user_check_query, guild_id, user_id)
+            
+            if not user_exists:
+                # Create user entry with default values
+                insert_query = """
+                INSERT INTO levels (guild_id, user_id, xp, level, last_xp_time, last_role, 
+                                   total_messages, total_reactions, voice_time_seconds, commands_used)
+                VALUES ($1, $2, 0, 1, $3, NULL, 0, 0, 0, 0)
+                """
+                await conn.execute(insert_query, guild_id, user_id, time.time())
+            
+            # Update the counter
+            query = f"""
+            UPDATE levels 
+            SET {counter_type} = COALESCE({counter_type}, 0) + $1
+            WHERE guild_id = $2 AND user_id = $3
+            RETURNING {counter_type}
+            """
+            
+            new_value = await conn.fetchval(query, increment, guild_id, user_id)
+            if new_value is None:
+                return -1, []
+            
+            # Check for completed achievements
+            # Get relevant achievements for this counter type and value
+            achievements_query = """
+            SELECT id, name, description, requirement_type, requirement_value, icon_path
+            FROM achievements
+            WHERE requirement_type = $1 
+            AND requirement_value <= $2
+            ORDER BY requirement_value DESC
+            """
+            
+            achievement_rows = await conn.fetch(achievements_query, counter_type, new_value)
+            
+            # Track newly completed achievements
+            newly_completed = []
+            
+            # Process each achievement
+            for achievement in achievement_rows:
+                # Check if user already has this achievement
+                has_query = """
+                SELECT completed FROM user_achievements
+                WHERE guild_id = $1 AND user_id = $2 AND achievement_id = $3
+                """
+                has_row = await conn.fetchrow(has_query, guild_id, user_id, achievement['id'])
+                
+                already_completed = has_row and has_row['completed']
+                
+                # If already completed, skip
+                if already_completed:
+                    continue
+                
+                # Mark as completed
+                upsert_query = """
+                INSERT INTO user_achievements (guild_id, user_id, achievement_id, progress, completed, completed_at)
+                VALUES ($1, $2, $3, $4, TRUE, CURRENT_TIMESTAMP)
+                ON CONFLICT (guild_id, user_id, achievement_id) 
+                DO UPDATE SET 
+                    progress = $4,
+                    completed = TRUE,
+                    completed_at = CURRENT_TIMESTAMP
+                RETURNING id
+                """
+                
+                await conn.execute(upsert_query, guild_id, user_id, achievement['id'], new_value)
+                
+                # Add to newly completed list
+                achievement_dict = dict(achievement)
+                achievement_dict['completed_at'] = datetime.now()
+                achievement_dict['progress'] = new_value
+                newly_completed.append(achievement_dict)
+            
+            # Get newly completed achievements from database
+            # This query only expects 2 parameters now
+            newly_completed_query = """
+            SELECT a.id, a.name, a.description, a.requirement_type, a.requirement_value, a.icon_path, 
+                   ua.completed_at, ua.progress
+            FROM user_achievements ua
+            JOIN achievements a ON ua.achievement_id = a.id
+            WHERE ua.guild_id = $1 
+            AND ua.user_id = $2 
+            AND ua.completed = true
+            AND ua.completed_at > (CURRENT_TIMESTAMP - INTERVAL '1 minute')
+            """
+            
+            rows = await conn.fetch(newly_completed_query, guild_id, user_id)
+            newly_completed = [dict(row) for row in rows]
+            
+            return new_value, newly_completed
+    except Exception as e:
+        logging.error(f"Error in _update_activity_counter_internal: {e}")
+        return -1, []
+
+async def get_user_achievements_db(guild_id: str, user_id: str) -> dict:
+    """
+    Get all achievements for a user with progress
+    
+    Returns:
+    - Dictionary containing completed and in-progress achievements
+    """
+    return await safe_db_operation("get_user_achievements_internal", guild_id, user_id)
+    
+async def _get_user_achievements_internal(guild_id: str, user_id: str) -> dict:
+    """Internal function for getting user achievements with error handling via safe_db_operation"""
+    try:
+        async with get_connection() as conn:
+            # Get all achievements
+            query = """
+            SELECT a.id, a.name, a.description, a.requirement_type, a.requirement_value, 
+                   a.icon_path, ua.progress, ua.completed, ua.completed_at
+            FROM achievements a
+            LEFT JOIN user_achievements ua ON 
+                a.id = ua.achievement_id AND 
+                ua.guild_id = $1 AND 
+                ua.user_id = $2
+            ORDER BY a.requirement_type, a.requirement_value
+            """
+            rows = await conn.fetch(query, guild_id, user_id)
+            
+            # Organize into categories
+            completed = []
+            in_progress = []
+            locked = []
+            
+            for row in rows:
+                achievement = dict(row)
+                
+                # Calculate progress percentage
+                if achievement['progress'] is not None and achievement['requirement_value'] > 0:
+                    achievement['percent'] = min(100, int((achievement['progress'] / achievement['requirement_value']) * 100))
+                else:
+                    achievement['percent'] = 0
+                
+                if achievement['completed']:
+                    completed.append(achievement)
+                elif achievement['progress'] is not None and achievement['progress'] > 0:
+                    in_progress.append(achievement)
+                else:
+                    locked.append(achievement)
+            
+            return {
+                "completed": completed,
+                "in_progress": in_progress,
+                "locked": locked,
+                "total_count": len(rows),
+                "completed_count": len(completed)
+            }
+    except Exception as e:
+        logging.error(f"Error fetching user achievements: {e}")
+        return {"completed": [], "in_progress": [], "locked": [], "total_count": 0, "completed_count": 0}
+
+async def create_achievement_db(name: str, description: str, requirement_type: str, 
+                              requirement_value: int, icon_path: str = None) -> int:
+    """
+    Create a new achievement
+    
+    Parameters:
+    - name: Achievement name
+    - description: Description text
+    - requirement_type: Type of requirement (total_messages, voice_time_seconds, etc.)
+    - requirement_value: Value required to earn the achievement
+    - icon_path: Optional path to icon image
+    
+    Returns:
+    - int: ID of the created achievement, or -1 on error
+    """
+    return await safe_db_operation("create_achievement_internal", name, description, requirement_type, requirement_value, icon_path)
+    
+async def _create_achievement_internal(name: str, description: str, requirement_type: str, 
+                                     requirement_value: int, icon_path: str = None) -> int:
+    """Internal function for creating achievement with error handling via safe_db_operation"""
+    try:
+        async with get_connection() as conn:
+            query = """
+            INSERT INTO achievements (name, description, requirement_type, requirement_value, icon_path)
+            VALUES ($1, $2, $3, $4, $5)
+            RETURNING id
+            """
+            
+            achievement_id = await conn.fetchval(
+                query, name, description, requirement_type, requirement_value, icon_path
+            )
+            
+            logging.info(f"Created new achievement: {name} (ID: {achievement_id})")
+            return achievement_id
+    except Exception as e:
+        logging.error(f"Error creating achievement: {e}")
+        return -1
+
+async def get_achievement_leaderboard_db(guild_id: str, limit: int = 10) -> list:
+    """
+    Get a leaderboard of users ranked by achievement count
+    
+    Parameters:
+    - guild_id: The guild ID
+    - limit: Maximum number of users to return
+    
+    Returns:
+    - List of user dictionaries with achievement counts
+    """
+    return await safe_db_operation("get_achievement_leaderboard_internal", guild_id, limit)
+    
+async def _get_achievement_leaderboard_internal(guild_id: str, limit: int = 10) -> list:
+    """Internal function for getting achievement leaderboard with error handling via safe_db_operation"""
+    try:
+        async with get_connection() as conn:
+            query = """
+            SELECT 
+                user_id, 
+                COUNT(CASE WHEN completed = true THEN 1 END) as completed_count,
+                (SELECT COUNT(*) FROM achievements) as total_achievements,
+                MAX(completed_at) as last_completed
+            FROM user_achievements
+            WHERE guild_id = $1 AND completed = true
+            GROUP BY user_id
+            ORDER BY completed_count DESC, last_completed DESC
+            LIMIT $2
+            """
+            
+            rows = await conn.fetch(query, guild_id, limit)
+            return [dict(row) for row in rows]
+    except Exception as e:
+        logging.error(f"Error getting achievement leaderboard: {e}")
+        return []
+
+async def get_achievement_stats_db(guild_id: str) -> dict:
+    """
+    Get overall achievement statistics for a guild
+    
+    Parameters:
+    - guild_id: The guild ID
+    
+    Returns:
+    - Dictionary with achievement statistics
+    """
+    return await safe_db_operation("get_achievement_stats_internal", guild_id)
+    
+async def _get_achievement_stats_internal(guild_id: str) -> dict:
+    """Internal function for getting achievement stats with error handling via safe_db_operation"""
+    try:
+        async with get_connection() as conn:
+            # Get total achievements
+            total_query = "SELECT COUNT(*) FROM achievements"
+            total_achievements = await conn.fetchval(total_query)
+            
+            # Get counts by category
+            category_query = """
+            SELECT requirement_type, COUNT(*) 
+            FROM achievements 
+            GROUP BY requirement_type
+            """
+            categories = await conn.fetch(category_query)
+            
+            # Get most common achievements
+            common_query = """
+            SELECT a.name, a.requirement_type, COUNT(ua.user_id) as earner_count
+            FROM achievements a
+            JOIN user_achievements ua ON a.id = ua.achievement_id
+            WHERE ua.guild_id = $1 AND ua.completed = true
+            GROUP BY a.id, a.name, a.requirement_type
+            ORDER BY earner_count DESC
+            LIMIT 5
+            """
+            most_common = await conn.fetch(common_query, guild_id)
+            
+            # Get rarest achievements
+            rare_query = """
+            SELECT a.name, a.requirement_type, COUNT(ua.user_id) as earner_count
+            FROM achievements a
+            JOIN user_achievements ua ON a.id = ua.achievement_id
+            WHERE ua.guild_id = $1 AND ua.completed = true
+            GROUP BY a.id, a.name, a.requirement_type
+            ORDER BY earner_count ASC
+            LIMIT 5
+            """
+            rarest = await conn.fetch(rare_query, guild_id)
+            
+            return {
+                "total_achievements": total_achievements,
+                "categories": {row["requirement_type"]: row["count"] for row in categories},
+                "most_common": [dict(row) for row in most_common],
+                "rarest": [dict(row) for row in rarest]
+            }
+    except Exception as e:
+        logging.error(f"Error getting achievement stats: {e}")
+        return {
+            "total_achievements": 0,
+            "categories": {},
+            "most_common": [],
+            "rarest": []
+        }
 
 # =====================
 # Connection Recovery and Migration

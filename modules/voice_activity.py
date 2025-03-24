@@ -353,7 +353,8 @@ async def handle_voice_state_update(bot, member, before, after):
             "channel_id": str(after.channel.id),
             "current_state": state,
             "state_start_time": current_time,
-            "state_history": []
+            "state_history": [],
+            "member":member
         }
         
         # Initialize speaking timestamp
