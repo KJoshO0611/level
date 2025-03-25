@@ -7,7 +7,7 @@ from datetime import datetime
 import io
 import logging
 from typing import Optional
-from modules.databasev2 import get_active_xp_boost_events, get_upcoming_xp_boost_events
+from database import get_active_xp_boost_events, get_upcoming_xp_boost_events
 from utils.rate_limiter import rate_limit, guild_key
 from utils.calendar_generator import generate_event_calendar
 from utils.minimal_calendar import generate_minimal_calendar

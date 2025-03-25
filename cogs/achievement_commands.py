@@ -6,7 +6,7 @@ import aiohttp
 import logging
 import time
 from typing import Optional, List, Literal
-from modules.databasev2 import (
+from database import (
     create_achievement_db,
     get_user_achievements_db,
     get_achievement_leaderboard_db,

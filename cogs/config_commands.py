@@ -5,7 +5,7 @@ from typing import Optional, Literal
 import logging
 import time
 from datetime import datetime
-from modules.databasev2 import (
+from database import (
     set_level_up_channel, 
     get_level_up_channel, 
     remove_channel_boost_db,

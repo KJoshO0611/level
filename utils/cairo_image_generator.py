@@ -21,7 +21,7 @@ from PIL import Image, ImageFont, ImageDraw
 from utils.memory_cache import MemoryAwareCache
 from utils.avatar_cache import get_cached_avatar
 from utils.simple_image_handler import run_in_executor
-from modules.databasev2 import get_user_rank, get_user_background
+from database import get_user_rank, get_user_background
 
 # Thread-safe LRU cache with TTL
 class TTLCache:
@@ -953,7 +953,7 @@ async def generate_level_card(member, level, xp, xp_needed, bot=None):
     
     try:
         # Get background path
-        from modules.databasev2 import get_user_background
+        from database import get_user_background
         relative_path = await get_user_background(guild_id, user_id)
         
         # Convert relative path to full path if a background exists
@@ -966,7 +966,7 @@ async def generate_level_card(member, level, xp, xp_needed, bot=None):
                 background_path = None
         
         # Get user's rank if available
-        from modules.databasev2 import get_user_rank
+        from database import get_user_rank
         rank = await get_user_rank(guild_id, user_id)
         
         # Get status

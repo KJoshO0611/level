@@ -643,7 +643,7 @@ async def generate_event_calendar(guild_id, guild_name, year=None, month=None, b
     - BytesIO: The generated calendar image
     """
     from utils.simple_image_handler import run_in_executor
-    from modules.databasev2 import get_active_xp_boost_events, get_upcoming_xp_boost_events
+    from database import get_active_xp_boost_events, get_upcoming_xp_boost_events
     
     # Default to current month if not specified
     if year is None or month is None:

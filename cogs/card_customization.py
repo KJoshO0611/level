@@ -3,7 +3,7 @@ from discord.ext import commands
 import os
 import aiohttp
 import logging
-from modules.databasev2 import set_user_background, get_user_background, remove_user_background
+from database import set_user_background, get_user_background, remove_user_background
 from config import load_config
 
 # Load the external volume path from config

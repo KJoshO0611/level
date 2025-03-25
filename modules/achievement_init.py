@@ -1,5 +1,5 @@
 import logging
-from modules.databasev2 import init_achievement_caches, log_achievement_cache_stats
+from database import init_achievement_caches, log_achievement_cache_stats
 
 async def initialize_achievement_system(bot):
     """Initialize the achievement system"""

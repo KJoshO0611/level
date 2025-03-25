@@ -34,6 +34,47 @@ DATABASE = {
         "PASSWORD": os.getenv("PASSWORD")
 }
 
+CACHE_CONFIG = {
+    "global": {
+        "memory_limit_mb": 200,
+        "enable_stats": True,
+        "log_interval": 3600  # Log stats hourly
+    },
+    "caches": {
+        "level_cache": {
+            "ttl": 300,
+            "max_size": 1000,
+            "weak_refs": False
+        },
+        "template_cache": {
+            "ttl": 3600,
+            "max_size": 100,
+            "weak_refs": True
+        },
+        "achievement_cache": {
+            "ttl": 600,
+            "max_size": 100,
+            "weak_refs": False
+        },
+        "avatar_cache": {
+            "ttl": 1800,
+            "max_size": 200,
+            "weak_refs": False
+        },
+        "background_cache": {
+            "ttl": 3600 * 3,  # 3 hours
+            "max_size": 100,
+            "weak_refs": True
+        }
+    },
+    "disk_cache": {
+        "enabled": True,
+        "directory": "/tmp/bot_cache",
+        "max_size_mb": 500,
+        "cleanup_interval": 86400  # Daily cleanup
+    }
+}
+
 def load_config():
     """Load environment variables and return a configuration dictionary"""
     # Load environment variables from .env file
@@ -46,7 +87,8 @@ def load_config():
         "XP_SETTINGS": XP_SETTINGS,
         "PATHS": PATHS,
         "DATABASE": DATABASE,
-        "EXTERNAL_VOLUME_PATH" : EXTERNAL_VOLUME_PATH
+        "EXTERNAL_VOLUME_PATH" : EXTERNAL_VOLUME_PATH,
+        "CACHE_CONFIG" : CACHE_CONFIG
     }
     
     return config

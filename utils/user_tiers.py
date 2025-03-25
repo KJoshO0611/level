@@ -24,7 +24,7 @@ async def get_user_tier(bot, user_id, guild_id):
             return "moderator", 2.0
     
     # Get user level to provide slight benefits to active users
-    from modules.databasev2 import get_user_levels
+    from database import get_user_levels
     xp, level = await get_user_levels(guild_id, user_id)
     
     # High level users get slightly higher limits

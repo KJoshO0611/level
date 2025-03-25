@@ -6,7 +6,7 @@ import discord
 
 from config import load_config
 from utils.performance_monitoring import time_function
-from modules.databasev2 import (
+from database import (
     get_or_create_user_level, 
     update_user_xp, 
     get_level_up_channel, 

@@ -3,7 +3,7 @@ import asyncio
 import discord
 from datetime import datetime
 import time
-from modules.databasev2 import (
+from database import (
     update_activity_counter_db,
     get_user_achievements_db,
     create_achievement_db,

@@ -7,7 +7,7 @@ from discord.ext import tasks
 
 from config import load_config
 from utils.performance_monitoring import time_function
-from modules.databasev2 import get_or_create_user_level, apply_channel_boost
+from database import get_or_create_user_level, apply_channel_boost
 from modules.levels import award_xp_without_event_multiplier, send_level_up_notification, xp_to_next_level
 
 config = load_config()
@@ -54,7 +54,7 @@ async def get_all_xp_boost_events_for_guild(guild_id):
     
     Returns a list of events with start_time, end_time, and multiplier
     """
-    from modules.databasev2 import get_active_xp_boost_events, get_upcoming_xp_boost_events
+    from database import get_active_xp_boost_events, get_upcoming_xp_boost_events
     
     # Get active events
     active_events = await get_active_xp_boost_events(guild_id)

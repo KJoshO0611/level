@@ -1,7 +1,7 @@
 import discord
 from discord.ext import commands
 from modules.levels import xp_to_next_level
-from modules.databasev2 import get_leaderboard, get_user_levels, get_user_rank
+from database import get_leaderboard, get_user_levels, get_user_rank
 # Import the new Cairo-based image generator instead of the old one
 from utils.cairo_image_generator import generate_level_card, generate_leaderboard_image
 from utils.simple_image_handler import generate_image_nonblocking, update_with_image

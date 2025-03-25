@@ -8,7 +8,7 @@ from discord import app_commands
 from discord.ext import commands, tasks
 from utils.performance_monitoring import performance_data
 from utils.cairo_image_generator import get_text_rendering_stats
-from modules.databasev2 import (
+from database import (
     get_health_stats, 
     load_channel_boosts,
     set_channel_boost_db,

@@ -37,7 +37,7 @@ root_logger.info("Bot starting - Logger initialized")
 try:
     # Local imports
     from config import load_config
-    from modules.databasev2 import init_db, close_db
+    from database import init_db, close_db
     from modules.voice_activity import start_voice_tracking, stop_periodic_processing
     from modules.levels import handle_message_xp, handle_reaction_xp
     from modules.achievements import register_achievement_hooks
