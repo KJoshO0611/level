@@ -154,6 +154,11 @@ async def initialize_services(bot):
     root_logger.info("Registering achivement hooks...")    
     register_achievement_hooks(bot)
 
+    # Initialize achievement system (caches)
+    root_logger.info("Initializing achievement system...")
+    from modules.achievement_init import initialize_achievement_system
+    await initialize_achievement_system(bot)
+
     # Start image processor
     root_logger.info("Starting image processor...")
     await start_image_processor(bot)
