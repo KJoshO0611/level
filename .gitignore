@@ -7,7 +7,6 @@ utils/__pycache__
 .dockerignore
 dockerfile
 feature_toggle.py
-database/
 
 modules/db.old.py
 .venv
