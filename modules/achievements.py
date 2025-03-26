@@ -9,6 +9,7 @@ from database import (
     create_achievement_db,
     get_achievement_leaderboard_db,
     get_achievement_stats_db,
+    get_level_up_channel,
 )
 # Import the existing voice_sessions from voice_activity.
 from modules.voice_activity import voice_sessions
@@ -34,11 +35,20 @@ async def send_achievement_notification(guild, member, achievement_data):
         if member.avatar:
             embed.set_thumbnail(url=member.avatar.url)
         
-        notification_channel = guild.system_channel
-        if notification_channel:
-            await notification_channel.send(embed=embed)
+        # Try to get the level up channel first
+        level_up_channel_id = await get_level_up_channel(str(guild.id))
+        if level_up_channel_id:
+            channel = guild.get_channel(int(level_up_channel_id))
+            if channel:
+                await channel.send(embed=embed)
+            else:
+                # If channel not found, fall back to system channel
+                if guild.system_channel:
+                    await guild.system_channel.send(embed=embed)
         else:
-            await member.send(embed=embed)
+            # If no level up channel set, use system channel
+            if guild.system_channel:
+                await guild.system_channel.send(embed=embed)
             
         logging.info(f"Sent achievement notification for {member.name}")
     except Exception as e:

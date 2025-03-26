@@ -377,3 +377,23 @@ async def reset_server_xp_settings(guild_id: str) -> bool:
             del server_xp_settings_cache[guild_id]
     
     return result is not False
+
+async def get_event_channel(guild_id: str):
+    """Get event channel with caching"""
+    # Try cache first
+    cached_value = _get_from_cache(config_cache, f"{guild_id}_event")
+    if cached_value is not None:
+        return cached_value
+    
+    # If not in cache, get from database
+    async with get_connection() as conn:
+        query = "SELECT event_channel FROM server_config WHERE guild_id = $1"
+        row = await conn.fetchrow(query, guild_id)
+        
+        channel_id = row['event_channel'] if row else None
+        
+        # Store in cache if found
+        if channel_id is not None:
+            _set_in_cache(config_cache, f"{guild_id}_event", channel_id)
+        
+        return channel_id
