@@ -94,15 +94,9 @@ class LevelingBot(commands.Bot):
             from cogs.leveling import LevelingCommands
             from cogs.config_commands import ConfigCommands
             from cogs.card_customization import BackgroundCommands
-            
-            # Try to import calendar commands if available
-            try:
-                from cogs.calendar_commands import CalendarCommands
-                has_calendar = True
-            except ImportError:
-                has_calendar = False
-                root_logger.warning("Calendar commands module not found, skipping")
-            
+            from cogs.calendar_commands import CalendarCommands
+            from cogs.achievement_commands import AchievementCommands
+
             # Add cogs one by one with logging
             await self.add_cog(LevelingCommands(self))
             root_logger.info("Added LevelingCommands cog")
@@ -110,8 +104,8 @@ class LevelingBot(commands.Bot):
             await self.add_cog(AdminCommands(self))
             root_logger.info("Added AdminCommands cog")
             
-            await self.add_cog(CustomHelpCommand(self))
-            root_logger.info("Added CustomHelpCommand cog")
+            await self.add_cog(AchievementCommands(self))
+            root_logger.info("Added CalendarCommands cog")
             
             await self.add_cog(ConfigCommands(self))
             root_logger.info("Added ConfigCommands cog")
@@ -119,10 +113,12 @@ class LevelingBot(commands.Bot):
             await self.add_cog(BackgroundCommands(self))
             root_logger.info("Added BackgroundCommands cog")
             
-            if has_calendar:
-                await self.add_cog(CalendarCommands(self))
-                root_logger.info("Added CalendarCommands cog")
-            
+            await self.add_cog(CalendarCommands(self))
+            root_logger.info("Added CalendarCommands cog")
+
+            await self.add_cog(CustomHelpCommand(self))
+            root_logger.info("Added CustomHelpCommand cog")
+
             # Sync the command tree
             await self.tree.sync()
             root_logger.info("Command tree synced successfully")

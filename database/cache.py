@@ -172,9 +172,9 @@ def log_achievement_cache_stats():
 def init_achievement_caches():
     """Initialize achievement caches"""
     logging.info("Initializing achievement caches")
-    ACHIEVEMENT_CACHE.start()
-    USER_ACHIEVEMENT_CACHE.start()
-    ACHIEVEMENT_BY_ID_CACHE.start()
-    LEADERBOARD_CACHE.start()
-    ACHIEVEMENT_STATS_CACHE.start()
-    RELEVANT_ACHIEVEMENTS_CACHE.start()
+    ACHIEVEMENT_CACHE
+    USER_ACHIEVEMENT_CACHE
+    ACHIEVEMENT_BY_ID_CACHE
+    LEADERBOARD_CACHE
+    ACHIEVEMENT_STATS_CACHE
+    RELEVANT_ACHIEVEMENTS_CACHE

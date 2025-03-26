@@ -180,7 +180,7 @@ async def _get_newly_completed_achievements(conn, guild_id: str, user_id: str,
         AND ua.user_id = $2 
         AND a.guild_id = $1
         AND ua.completed = true
-        AND ua.completed_at > CURRENT_TIMESTAMP - INTERVAL '$3 seconds'
+        AND ua.completed_at > CURRENT_TIMESTAMP - ($3 * INTERVAL '1 second')
         """
         
         rows = await conn.fetch(query, guild_id, user_id, time_window)
