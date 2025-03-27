@@ -608,7 +608,7 @@ def _generate_level_card_cairo_sync(avatar_bytes, username, user_id, level, xp, 
     has_title = selected_title is not None
     
     # We'll adjust height and positions later based on these flags
-
+    
     # Create surface and context
     surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, width, height)
     ctx = cairo.Context(surface)
@@ -623,6 +623,7 @@ def _generate_level_card_cairo_sync(avatar_bytes, username, user_id, level, xp, 
         try:
             logging.info(f"Loading background from path: {background_path}")
             background_surface = load_image_surface(background_path, width, height)
+
             if background_surface:
                 ctx.save()
                 ctx.set_source_surface(background_surface, 0, 0)
@@ -681,7 +682,7 @@ def _generate_level_card_cairo_sync(avatar_bytes, username, user_id, level, xp, 
                 
                 # Create circular clipping path
                 ctx.arc(avatar_pos_x + avatar_size/2, avatar_pos_y + avatar_size/2, 
-                        avatar_size/2, 0, 2 * math.pi)
+                       avatar_size/2, 0, 2 * math.pi)
                 ctx.clip()
                 
                 # Draw avatar
@@ -691,12 +692,13 @@ def _generate_level_card_cairo_sync(avatar_bytes, username, user_id, level, xp, 
                 
                 # Add a thin border around avatar
                 ctx.arc(avatar_pos_x + avatar_size/2, avatar_pos_y + avatar_size/2, 
-                        avatar_size/2, 0, 2 * math.pi)
+                       avatar_size/2, 0, 2 * math.pi)
                 ctx.set_source_rgb(80/255, 80/255, 80/255)
                 ctx.set_line_width(2)
                 ctx.stroke()
                 
                 draw_default_avatar = False
+
         except Exception as e:
             logging.error(f"Error processing avatar: {e}")
             draw_default_avatar = True
@@ -729,21 +731,21 @@ def _generate_level_card_cairo_sync(avatar_bytes, username, user_id, level, xp, 
     status_color = status_colors.get(status.lower(), status_colors["offline"])
     status_size = 18
     border_size = 2
-    
-    # Use original status position if provided, otherwise calculate based on avatar
+        
+        # Use original status position if provided, otherwise calculate based on avatar
     if status_pos_x == 80 and status_pos_y == 90:  # If using default values
         status_pos_x = avatar_pos_x + avatar_size - status_size/2
         status_pos_y = avatar_pos_y + avatar_size - status_size/2
-    
-    # Draw outer circle (border)
-    ctx.arc(status_pos_x, status_pos_y, status_size/2, 0, 2 * math.pi)
-    ctx.set_source_rgb(30/255, 30/255, 30/255)  # Dark color for border
-    ctx.fill()
-    
-    # Draw inner circle (status color)
-    ctx.arc(status_pos_x, status_pos_y, (status_size - border_size)/2, 0, 2 * math.pi)
-    ctx.set_source_rgb(*status_color)  # Status color
-    ctx.fill()
+            
+            # Draw outer circle (border)
+        ctx.arc(status_pos_x, status_pos_y, status_size/2, 0, 2 * math.pi)
+        ctx.set_source_rgb(30/255, 30/255, 30/255)  # Dark color for border
+        ctx.fill()
+            
+            # Draw inner circle (status color)
+        ctx.arc(status_pos_x, status_pos_y, (status_size - border_size)/2, 0, 2 * math.pi)
+        ctx.set_source_rgb(*status_color)  # Status color
+        ctx.fill()
     
     # XP bar settings - dynamic position based on content
     xp_bar_width = width - (avatar_pos_x + avatar_size + 20) - 20  # 20px padding from right edge
@@ -1066,7 +1068,7 @@ def _generate_level_card_cairo_sync(avatar_bytes, username, user_id, level, xp, 
             height - 15,
             default_pil_font,
             (100/255, 100/255, 100/255)
-        )
+    )
     
     # Save to bytes
     image_bytes = io.BytesIO()

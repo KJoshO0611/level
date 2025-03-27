@@ -174,6 +174,45 @@ async def create_user_achievement_settings_table(bot):
         logging.error(f"Error creating user_achievement_settings table: {e}")
         return False
 
+async def migration_version_8():
+    """
+    Migration to add quest_cooldowns column to server_config table
+    """
+    try:
+        async with get_connection() as conn:
+            # Check if column exists already
+            check_query = """
+            SELECT column_name FROM information_schema.columns 
+            WHERE table_name = 'server_config' AND column_name = 'quest_cooldowns'
+            """
+            result = await conn.fetchval(check_query)
+            
+            if not result:
+                # Add the column
+                add_column_query = """
+                ALTER TABLE server_config 
+                ADD COLUMN IF NOT EXISTS quest_cooldowns JSONB DEFAULT NULL
+                """
+                await conn.execute(add_column_query)
+                
+                # Initialize with default values from config
+                from config import QUEST_SETTINGS
+                update_query = """
+                UPDATE server_config 
+                SET quest_cooldowns = $1
+                WHERE quest_cooldowns IS NULL
+                """
+                await conn.execute(update_query, QUEST_SETTINGS["COOLDOWNS"])
+                
+                logging.info("Migration 8: Added quest_cooldowns column to server_config table")
+            else:
+                logging.info("Migration 8: server_config.quest_cooldowns column already exists")
+            
+            return True
+    except Exception as e:
+        logging.error(f"Migration 8 error: {e}")
+        return False
+
 # Add a function to run all migrations
 async def run_all_migrations(bot):
     """
@@ -189,7 +228,8 @@ async def run_all_migrations(bot):
         migrations = [
             update_achievement_schema(bot),
             update_server_config_schema(bot),
-            create_user_achievement_settings_table(bot)
+            create_user_achievement_settings_table(bot),
+            migration_version_8()
         ]
         
         results = await asyncio.gather(*migrations, return_exceptions=True)

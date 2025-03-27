@@ -20,6 +20,16 @@ XP_SETTINGS = {
     "IDLE_THRESHOLD": 300  # 5 minutes without speaking = idle
 }
 
+# Quest settings to prevent farming
+QUEST_SETTINGS = {
+    "COOLDOWNS": {
+        "total_messages": 30,    # 30 seconds between message quest updates
+        "total_reactions": 10,   # 10 seconds between reaction quest updates
+        "commands_used": 10,     # 10 seconds between command quest updates
+        "voice_time_seconds": 0  # No additional cooldown for voice time (already rate-limited by sessions)
+    }
+}
+
 # Paths
 PATHS = {
     "FONT_PATH": "data/fonts/",
@@ -85,6 +95,7 @@ def load_config():
         "TOKEN": os.getenv("TOKEN"),
         "GUILD_ID": os.getenv("GUILDID"),
         "XP_SETTINGS": XP_SETTINGS,
+        "QUEST_SETTINGS": QUEST_SETTINGS,
         "PATHS": PATHS,
         "DATABASE": DATABASE,
         "EXTERNAL_VOLUME_PATH" : EXTERNAL_VOLUME_PATH,

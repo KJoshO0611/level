@@ -103,6 +103,13 @@ from .quests import (
     award_quest_rewards,
 )
 
+# Import quest cooldown functions
+from .server_config import (
+    get_quest_cooldowns,
+    update_quest_cooldowns,
+    update_quest_cooldown
+)
+
 # Export all public functions
 __all__ = [
     # Core
@@ -138,7 +145,10 @@ __all__ = [
     'get_all_user_backgrounds', 'get_guild_backgrounds',
     
     # Utils
-    'safe_db_operation', 'retry_pending_operations'
+    'safe_db_operation', 'retry_pending_operations',
+    
+    # Quest cooldowns
+    'get_quest_cooldowns', 'update_quest_cooldowns', 'update_quest_cooldown'
 ]
 
 # Add these to __all__ list:

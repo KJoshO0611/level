@@ -18,8 +18,11 @@ from database import (
     reset_server_xp_settings,
     set_achievement_channel,
     set_quest_channel,
+    get_quest_cooldowns,
+    update_quest_cooldown,
+    update_quest_cooldowns
 )
-from config import load_config, XP_SETTINGS
+from config import load_config, XP_SETTINGS, QUEST_SETTINGS
 
 # Load configuration
 config = load_config()
@@ -485,6 +488,121 @@ class ConfigCommands(commands.Cog):
             f"✅ Quest notifications will now be sent to {channel.mention}",
             ephemeral=True
         )
+
+    @app_commands.command(name="questcooldowns", description="View and configure quest cooldown settings")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def quest_cooldowns(self, interaction: discord.Interaction):
+        """View current quest cooldown settings"""
+        guild_id = str(interaction.guild.id)
+        
+        # Get current quest cooldown settings
+        cooldowns = await get_quest_cooldowns(guild_id)
+        
+        embed = discord.Embed(
+            title="Quest Cooldown Settings",
+            description="Current cooldown configuration for quests in this server",
+            color=discord.Color.blue()
+        )
+        
+        # Format cooldowns nicely
+        cooldown_text = (
+            f"• Message quests: {cooldowns.get('total_messages', 0)} seconds\n"
+            f"• Reaction quests: {cooldowns.get('total_reactions', 0)} seconds\n"
+            f"• Command quests: {cooldowns.get('commands_used', 0)} seconds\n"
+            f"• Voice quests: {cooldowns.get('voice_time_seconds', 0)} seconds"
+        )
+        
+        embed.add_field(
+            name="Current Cooldowns",
+            value=cooldown_text,
+            inline=False
+        )
+        
+        # Show the default settings for comparison
+        default_cooldowns = QUEST_SETTINGS["COOLDOWNS"]
+        
+        default_text = (
+            f"• Message quests: {default_cooldowns.get('total_messages', 0)} seconds\n"
+            f"• Reaction quests: {default_cooldowns.get('total_reactions', 0)} seconds\n"
+            f"• Command quests: {default_cooldowns.get('commands_used', 0)} seconds\n"
+            f"• Voice quests: {default_cooldowns.get('voice_time_seconds', 0)} seconds"
+        )
+        
+        embed.add_field(
+            name="Default Cooldowns",
+            value=default_text,
+            inline=False
+        )
+        
+        embed.add_field(
+            name="Commands",
+            value=(
+                "Use these slash commands to configure cooldowns:\n"
+                "`/setquestcooldown` - Set cooldown for a specific quest type\n"
+                "`/resetquestcooldowns` - Reset to default cooldowns"
+            ),
+            inline=False
+        )
+        
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+    
+    @app_commands.command(name="setquestcooldown", description="Set the cooldown for a specific quest type")
+    @app_commands.describe(
+        quest_type="The type of quest to configure",
+        seconds="Cooldown time in seconds (0-300)"
+    )
+    @app_commands.choices(
+        quest_type=[
+            app_commands.Choice(name="Message quests", value="total_messages"),
+            app_commands.Choice(name="Reaction quests", value="total_reactions"),
+            app_commands.Choice(name="Command quests", value="commands_used"),
+            app_commands.Choice(name="Voice quests", value="voice_time_seconds")
+        ]
+    )
+    @app_commands.checks.has_permissions(administrator=True)
+    async def set_quest_cooldown(self, interaction: discord.Interaction, quest_type: str, seconds: int):
+        """Set the cooldown for a specific quest type"""
+        if seconds < 0 or seconds > 300:
+            return await interaction.response.send_message("⚠️ Cooldown must be between 0 and 300 seconds", ephemeral=True)
+        
+        guild_id = str(interaction.guild.id)
+        
+        # Update the cooldown setting
+        success = await update_quest_cooldown(guild_id, quest_type, seconds)
+        
+        if success:
+            # Get display name for the quest type
+            quest_type_names = {
+                "total_messages": "Message quests",
+                "total_reactions": "Reaction quests",
+                "commands_used": "Command quests",
+                "voice_time_seconds": "Voice quests"
+            }
+            display_name = quest_type_names.get(quest_type, quest_type)
+            
+            await interaction.response.send_message(
+                f"✅ Cooldown for {display_name} set to {seconds} seconds", 
+                ephemeral=True
+            )
+        else:
+            await interaction.response.send_message("❌ Failed to update quest cooldown settings", ephemeral=True)
+    
+    @app_commands.command(name="resetquestcooldowns", description="Reset quest cooldowns to default values")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def reset_quest_cooldowns(self, interaction: discord.Interaction):
+        """Reset quest cooldowns to default values"""
+        guild_id = str(interaction.guild.id)
+        
+        # Get default cooldown settings
+        default_cooldowns = QUEST_SETTINGS["COOLDOWNS"]
+        
+        # Update with defaults
+        success = await update_quest_cooldowns(guild_id, default_cooldowns)
+        
+        if success:
+            await interaction.response.send_message("✅ Quest cooldowns reset to default values", ephemeral=True)
+        else:
+            await interaction.response.send_message("❌ Failed to reset quest cooldown settings", ephemeral=True)
 
 # Setup function for the cog
 async def setup(bot):

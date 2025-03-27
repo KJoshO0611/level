@@ -319,16 +319,21 @@ async def handle_voice_channel_exit(guild_id, user_id, member):
     else:
         logging.info(f"No XP awarded to {member.name} for voice activity (total_xp = {total_xp})")
     
-    # Clean up the tracking
-    del voice_sessions[user_id]
-    if user_id in voice_channels:
-        del voice_channels[user_id]
+    # Mark session as ready for cleanup, but keep data for quest processing
+    # IMPORTANT: Do not delete the session data here, as the quest system needs it
+    voice_sessions[user_id]["ready_for_cleanup"] = True
+    voice_sessions[user_id]["cleanup_time"] = current_time
+    voice_sessions[user_id]["exit_processed"] = True
+    
+    # Keep the data but remove user from active tracking systems
     if user_id in stream_watchers:
         del stream_watchers[user_id]
     if user_id in last_spoke:
         del last_spoke[user_id]
+    if user_id in voice_channels:
+        del voice_channels[user_id]
 
-@time_function(name="Voice_StateUpdate", log_always=True)
+@time_function(name="Voice_StateUpdate")
 async def handle_voice_state_update(bot, member, before, after):
     """Handle voice state update events"""
     guild_id = str(member.guild.id)
@@ -354,7 +359,8 @@ async def handle_voice_state_update(bot, member, before, after):
             "current_state": state,
             "state_start_time": current_time,
             "state_history": [],
-            "member":member
+            "member": member,
+            "exit_processed": False
         }
         
         # Initialize speaking timestamp
@@ -534,24 +540,49 @@ async def check_idle_users(bot):
 @tasks.loop(seconds=PERIODIC_PROCESSING_INTERVAL)
 async def periodic_voice_processing(bot):
     """
-    Periodically process long voice sessions and clean up inactive ones
-    This task runs every PERIODIC_PROCESSING_INTERVAL seconds
+    Perform periodic processing of voice sessions
+    This includes processing long sessions and cleaning up inactive ones
     """
     try:
         current_time = time.time()
-        logging.info(f"Starting periodic voice session processing at {current_time}")
         
-        # Process long sessions first
+        # Process any long-running voice sessions
         await process_long_voice_sessions(bot, current_time)
         
-        # Then clean up inactive sessions
+        # Clean up inactive sessions
         cleanup_inactive_sessions(current_time)
         
-        # Compact oversized session histories
+        # Compact large state histories to prevent memory growth
         compact_large_histories()
         
-        logging.info(f"Completed periodic voice processing. Active sessions: {len(voice_sessions)}")
+        # Log memory stats periodically
+        total_sessions = len(voice_sessions)
+        total_channels = len(voice_channels)
+        total_watchers = len(stream_watchers)
+        total_speakers = len(last_spoke)
         
+        logging.info(f"Voice tracking stats: {total_sessions} active sessions, "
+                   f"{total_channels} channel mappings, {total_watchers} stream watchers")
+                   
+        # Check for any potentially stale/orphaned sessions
+        stale_sessions = 0
+        for user_id, session in voice_sessions.items():
+            # Sessions without exit_processed flag might be orphaned
+            if not session.get("ready_for_cleanup", False) and current_time - session.get("state_start_time", 0) > 3600:
+                logging.warning(f"Potentially stale voice session for {user_id}, "
+                              f"active for {(current_time - session.get('state_start_time', 0)) / 60:.1f} minutes")
+                stale_sessions += 1
+                
+                # If exceptionally old (over 6 hours), force cleanup
+                if current_time - session.get("state_start_time", 0) > 6 * 3600:
+                    logging.warning(f"Force cleaning very stale voice session for {user_id}")
+                    session["ready_for_cleanup"] = True
+                    session["cleanup_time"] = current_time
+                    session["exit_processed"] = True  # Mark as processed so it can be cleaned up
+        
+        if stale_sessions > 0:
+            logging.warning(f"Found {stale_sessions} potentially stale voice sessions")
+    
     except Exception as e:
         logging.error(f"Error in periodic voice processing: {e}")
 
@@ -644,37 +675,23 @@ async def process_long_voice_sessions(bot, current_time):
     logging.info(f"Processed {processed_count} long voice sessions")
     
 def cleanup_inactive_sessions(current_time):
-    """
-    Remove voice sessions that appear to be inactive or stale
-    This handles cases where voice_state_update events were missed
-    """
-    removed_count = 0
+    """Clean up inactive voice sessions after a delay"""
+    to_remove = []
     
-    for user_id in list(voice_sessions.keys()):
-        try:
-            session = voice_sessions[user_id]
-            state_start_time = session["state_start_time"]
+    for user_id, session in voice_sessions.items():
+        # Check if session is marked for cleanup and enough time has passed
+        if (session.get("ready_for_cleanup", False) and 
+            session.get("cleanup_time", 0) < current_time - 300 and  # 5 minutes delay (increased from previous)
+            session.get("exit_processed", False)):  # Ensure exit was processed
             
-            # Check if session is too old (inactive)
-            if current_time - state_start_time > INACTIVE_SESSION_THRESHOLD:
-                # Clean up all tracking for this user
-                del voice_sessions[user_id]
-                if user_id in voice_channels:
-                    del voice_channels[user_id]
-                if user_id in stream_watchers:
-                    del stream_watchers[user_id]
-                if user_id in last_spoke:
-                    del last_spoke[user_id]
-                if user_id in last_processed:
-                    del last_processed[user_id]
-                    
-                removed_count += 1
-                logging.info(f"Removed inactive voice session for user {user_id} (inactive for {(current_time - state_start_time) / 3600:.1f} hours)")
-        
-        except Exception as e:
-            logging.error(f"Error cleaning up voice session for user {user_id}: {e}")
+            # Add to removal list
+            to_remove.append(user_id)
+            logging.info(f"Cleaning up voice session for user {user_id}")
     
-    logging.info(f"Removed {removed_count} inactive voice sessions")
+    # Remove sessions
+    for user_id in to_remove:
+        if user_id in voice_sessions:
+            del voice_sessions[user_id]
 
 def compact_large_histories():
     """

@@ -82,7 +82,8 @@ class LevelingBot(commands.Bot):
             "command": RateLimiter(max_calls=30, period=60, name="general_commands"),
             "leaderboard": RateLimiter(max_calls=2, period=30, name="leaderboard"),
             "guild": RateLimiter(max_calls=200, period=60, name="guild_commands"),
-            "global": RateLimiter(max_calls=1000, period=60, name="global")
+            "global": RateLimiter(max_calls=1000, period=60, name="global"),
+            "quest": RateLimiter(max_calls=100, period=60, name="quest_progress")
         }
         root_logger.info("Rate limiters initialized")
 

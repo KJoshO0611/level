@@ -8,6 +8,7 @@ import random
 from datetime import datetime, timedelta
 from discord.ext import tasks
 
+from config import load_config, QUEST_SETTINGS
 from database import (
     get_guild_active_quests,
     mark_quests_inactive,
@@ -16,7 +17,8 @@ from database import (
     get_user_active_quests,
     create_quest,
     get_quest_channel,
-    get_level_up_channel
+    get_level_up_channel,
+    get_quest_cooldowns
 )
 
 # ===== QUEST INTEGRATION FUNCTIONS =====
@@ -33,6 +35,36 @@ async def handle_message_quests(message, bot):
 
     guild_id = str(message.guild.id)
     user_id = str(message.author.id)
+    
+    # Check rate limiting for quest progress
+    quest_key = f"quest:message:{user_id}"
+    is_limited, wait_time = await bot.rate_limiters["quest"].check_rate_limit(quest_key)
+    
+    # Additional cooldown specific to message quests
+    message_quest_key = f"quest_message:{user_id}"
+    # Get server-specific cooldown settings
+    quest_cooldowns = await get_quest_cooldowns(guild_id)
+    cooldown = quest_cooldowns.get("total_messages", QUEST_SETTINGS["COOLDOWNS"]["total_messages"])
+    is_message_limited = False
+    
+    if cooldown > 0:
+        # Create a custom limiter for this specific quest type with the configured cooldown
+        if not hasattr(bot, "_message_quest_limiter"):
+            bot._message_quest_limiter = {}
+        
+        if guild_id not in bot._message_quest_limiter:
+            from utils.rate_limiter import RateLimiter
+            bot._message_quest_limiter[guild_id] = RateLimiter(max_calls=1, period=cooldown, name="message_quest")
+            
+        is_message_limited, _ = await bot._message_quest_limiter[guild_id].check_rate_limit(user_id)
+    
+    # If either limiter is triggered, skip quest progress
+    if is_limited or is_message_limited:
+        if is_limited:
+            logging.debug(f"Message quest rate limited for user {user_id}, try again in {wait_time}s")
+        else:
+            logging.debug(f"Message quest cooldown active for user {user_id}")
+        return
     
     # Update total_messages counter and check for completed quests
     from database import update_activity_counter_db
@@ -55,6 +87,37 @@ async def handle_reaction_quests(reaction, user):
         
     guild_id = str(reaction.message.guild.id)
     user_id = str(user.id)
+    
+    # Check rate limiting for quest progress
+    quest_key = f"quest:reaction:{user_id}"
+    is_limited, wait_time = await reaction.message.guild.bot.rate_limiters["quest"].check_rate_limit(quest_key)
+    
+    # Additional cooldown specific to reaction quests
+    reaction_quest_key = f"quest_reaction:{user_id}"
+    # Get server-specific cooldown settings
+    quest_cooldowns = await get_quest_cooldowns(guild_id)
+    cooldown = quest_cooldowns.get("total_reactions", QUEST_SETTINGS["COOLDOWNS"]["total_reactions"])
+    is_reaction_limited = False
+    
+    if cooldown > 0:
+        # Create a custom limiter for this specific quest type with the configured cooldown
+        bot = reaction.message.guild.bot
+        if not hasattr(bot, "_reaction_quest_limiter"):
+            bot._reaction_quest_limiter = {}
+        
+        if guild_id not in bot._reaction_quest_limiter:
+            from utils.rate_limiter import RateLimiter
+            bot._reaction_quest_limiter[guild_id] = RateLimiter(max_calls=1, period=cooldown, name="reaction_quest")
+            
+        is_reaction_limited, _ = await bot._reaction_quest_limiter[guild_id].check_rate_limit(user_id)
+    
+    # If either limiter is triggered, skip quest progress
+    if is_limited or is_reaction_limited:
+        if is_limited:
+            logging.debug(f"Reaction quest rate limited for user {user_id}, try again in {wait_time}s")
+        else:
+            logging.debug(f"Reaction quest cooldown active for user {user_id}")
+        return
     
     # Update total_reactions counter and check for completed quests
     from database import update_activity_counter_db
@@ -79,6 +142,36 @@ async def handle_command_quests(ctx):
     guild_id = str(ctx.guild.id)
     user_id = str(ctx.author.id)
     
+    # Check rate limiting for quest progress
+    quest_key = f"quest:command:{user_id}"
+    is_limited, wait_time = await ctx.bot.rate_limiters["quest"].check_rate_limit(quest_key)
+    
+    # Additional cooldown specific to command quests
+    command_quest_key = f"quest_command:{user_id}"
+    # Get server-specific cooldown settings
+    quest_cooldowns = await get_quest_cooldowns(guild_id)
+    cooldown = quest_cooldowns.get("commands_used", QUEST_SETTINGS["COOLDOWNS"]["commands_used"])
+    is_command_limited = False
+    
+    if cooldown > 0:
+        # Create a custom limiter for this specific quest type with the configured cooldown
+        if not hasattr(ctx.bot, "_command_quest_limiter"):
+            ctx.bot._command_quest_limiter = {}
+        
+        if guild_id not in ctx.bot._command_quest_limiter:
+            from utils.rate_limiter import RateLimiter
+            ctx.bot._command_quest_limiter[guild_id] = RateLimiter(max_calls=1, period=cooldown, name="command_quest")
+            
+        is_command_limited, _ = await ctx.bot._command_quest_limiter[guild_id].check_rate_limit(user_id)
+    
+    # If either limiter is triggered, skip quest progress
+    if is_limited or is_command_limited:
+        if is_limited:
+            logging.debug(f"Command quest rate limited for user {user_id}, try again in {wait_time}s")
+        else:
+            logging.debug(f"Command quest cooldown active for user {user_id}")
+        return
+    
     # Update commands_used counter and check for completed quests
     from database import update_activity_counter_db
     new_value, _ = await update_activity_counter_db(guild_id, user_id, "commands_used", 1)
@@ -98,35 +191,81 @@ async def handle_voice_quests(guild_id, user_id, seconds, member):
     if seconds <= 0 or not member or member.bot:
         return
     
+    logging.info(f"Processing voice quests for {member.name}: {seconds} seconds")
+    
+    # Check rate limiting for quest progress
+    quest_key = f"quest:voice:{user_id}"
+    is_limited, wait_time = await member.guild.bot.rate_limiters["quest"].check_rate_limit(quest_key)
+    
+    # Additional cooldown specific to voice quests - usually set to 0 as voice already has inherent rate limiting
+    # Get server-specific cooldown settings
+    quest_cooldowns = await get_quest_cooldowns(guild_id)
+    cooldown = quest_cooldowns.get("voice_time_seconds", QUEST_SETTINGS["COOLDOWNS"]["voice_time_seconds"])
+    is_voice_limited = False
+    
+    if cooldown > 0:
+        # Create a custom limiter for this specific quest type with the configured cooldown
+        bot = member.guild.bot
+        if not hasattr(bot, "_voice_quest_limiter"):
+            bot._voice_quest_limiter = {}
+        
+        if guild_id not in bot._voice_quest_limiter:
+            from utils.rate_limiter import RateLimiter
+            bot._voice_quest_limiter[guild_id] = RateLimiter(max_calls=1, period=cooldown, name="voice_quest")
+            
+        is_voice_limited, _ = await bot._voice_quest_limiter[guild_id].check_rate_limit(user_id)
+    
+    # If either limiter is triggered, skip quest progress
+    if is_limited or is_voice_limited:
+        if is_limited:
+            logging.debug(f"Voice quest rate limited for user {user_id}, try again in {wait_time}s")
+        else:
+            logging.debug(f"Voice quest cooldown active for user {user_id}")
+        return
+    
     # Update voice_time_seconds counter and check for completed quests
     from database import update_activity_counter_db
-    new_value, _ = await update_activity_counter_db(guild_id, user_id, "voice_time_seconds", seconds)
-    
-    # Check quest progress with new counter value
-    newly_completed = await check_quest_progress(
-        guild_id, user_id, "voice_time_seconds", new_value
-    )
-    
-    # Award rewards for completed quests
-    for quest in newly_completed:
-        await award_quest_rewards(guild_id, user_id, quest['id'], member)
+    try:
+        new_value, newly_completed = await update_activity_counter_db(guild_id, user_id, "voice_time_seconds", seconds)
         
-        # Try to find an appropriate channel to send the notification
-        channel = None
+        logging.info(f"Updated voice_time_seconds for {member.name}: new total={new_value} seconds ({new_value//60} minutes)")
         
-        # Try to get level-up channel first
-        from database import get_level_up_channel
-        level_channel_id = await get_level_up_channel(guild_id)
-        if level_channel_id:
-            channel = member.guild.get_channel(int(level_channel_id))
+        if newly_completed:
+            logging.info(f"User {member.name} completed {len(newly_completed)} voice quests: {[q['name'] for q in newly_completed]}")
         
-        # Fallback to system channel
-        if not channel and member.guild.system_channel:
-            channel = member.guild.system_channel
-        
-        # Send notification if we found a channel
-        if channel:
-            await send_quest_completion_notification(channel, member, quest)
+        # Award rewards for completed quests
+        for quest in newly_completed:
+            await award_quest_rewards(guild_id, user_id, quest['id'], member)
+            
+            # Try to find an appropriate channel to send the notification
+            channel = None
+            
+            # Try to get quest channel first
+            quest_channel_id = await get_quest_channel(guild_id)
+            if quest_channel_id:
+                try:
+                    channel = member.guild.get_channel(int(quest_channel_id))
+                except:
+                    channel = None
+            
+            # Try to get level-up channel as fallback
+            if not channel:
+                level_channel_id = await get_level_up_channel(guild_id)
+                if level_channel_id:
+                    try:
+                        channel = member.guild.get_channel(int(level_channel_id))
+                    except:
+                        channel = None
+            
+            # Fallback to system channel
+            if not channel and member.guild.system_channel:
+                channel = member.guild.system_channel
+            
+            # Send notification if we found a channel
+            if channel:
+                await send_quest_completion_notification(channel, member, quest)
+    except Exception as e:
+        logging.error(f"Error processing voice quest data: {e}")
 
 async def send_quest_completion_notification(channel, user, quest):
     """Send a notification when a quest is completed"""
@@ -442,6 +581,8 @@ def register_quest_hooks(bot):
         
         # If user is leaving a channel, process voice time for quests
         if before.channel and not after.channel:
+            logging.info(f"Quest system: User {member.name} left voice channel {before.channel.name}, checking voice sessions")
+            
             # Use voice_sessions from voice_activity to get session duration
             from modules.voice_activity import voice_sessions
             
@@ -453,20 +594,36 @@ def register_quest_hooks(bot):
                 if "state_history" in voice_sessions[user_id]:
                     # Sum up all state durations
                     total_seconds = 0
+                    states_summary = []
+                    
                     for state in voice_sessions[user_id]["state_history"]:
                         duration = state["end"] - state["start"]
+                        state_name = state["state"]
+                        
+                        # Log each state
+                        states_summary.append(f"{state_name}: {int(duration)}s")
+                        
                         # Only count time when not muted/deafened
-                        if state["state"] in ["active", "streaming", "watching"]:
+                        if state_name in ["active", "streaming", "watching"]:
                             total_seconds += duration
+                    
+                    logging.info(f"Quest system: Voice session states for {member.name}: {', '.join(states_summary)}")
                     
                     # Process voice time for quests
                     if total_seconds > 0:
+                        logging.info(f"Quest system: Processing {int(total_seconds)} seconds of active voice time for {member.name}")
                         await handle_voice_quests(guild_id, user_id, int(total_seconds), member)
+                    else:
+                        logging.info(f"Quest system: No active voice time to process for {member.name} (user was muted/deafened)")
+                else:
+                    logging.warning(f"Quest system: No state history for {member.name} in voice sessions")
+            else:
+                logging.warning(f"Quest system: User {member.name} not found in voice sessions when leaving channel")
     
-    # Update the voice handler in modules where it's used
+    # Update the voice handler in voice_activity module
     from modules import voice_activity
     voice_activity.handle_voice_state_update = voice_handler_with_quests
-    
+
     # Start the quest manager
     quest_manager.start()
     
