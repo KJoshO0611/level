@@ -10,6 +10,7 @@ from database import (
     get_achievement_leaderboard_db,
     get_achievement_stats_db,
     get_level_up_channel,
+    get_achievement_channel,
 )
 # Import the existing voice_sessions from voice_activity.
 from modules.voice_activity import voice_sessions
@@ -19,41 +20,65 @@ from modules.voice_activity import voice_sessions
 
 async def send_achievement_notification(guild, member, achievement_data):
     """
-    Send a notification for a completed achievement.
+    Send a notification when an achievement is completed
     """
     try:
         embed = discord.Embed(
             title="🏆 Achievement Unlocked!",
-            description=f"{member.mention} has earned **{achievement_data['name']}**!",
+            description=f"{member.mention} has earned the achievement:",
             color=discord.Color.gold()
         )
-        embed.add_field(
-            name="Description",
-            value=achievement_data['description'],
-            inline=False
-        )
         
-        # Try to get server-specific avatar first
-        guild_member = guild.get_member(member.id)
-        if guild_member and guild_member.avatar:
-            embed.set_thumbnail(url=guild_member.avatar.url)
+        embed.add_field(name="Achievement", value=achievement_data['name'], inline=False)
+        embed.add_field(name="Description", value=achievement_data['description'], inline=False)
+        
+        # Try to get server-specific (guild) avatar first
+        if hasattr(member, 'guild_avatar') and member.guild_avatar:
+            embed.set_thumbnail(url=member.guild_avatar.url)
+        # Then fall back to global avatar
         elif member.avatar:
             embed.set_thumbnail(url=member.avatar.url)
+        # Finally, use default avatar as last resort
+        else:
+            embed.set_thumbnail(url=member.default_avatar.url)
         
-        # Try to get the level up channel first
-        level_up_channel_id = await get_level_up_channel(str(guild.id))
-        if level_up_channel_id:
-            channel = guild.get_channel(int(level_up_channel_id))
+        # Try to get achievement channel first
+        achievement_channel_id = await get_achievement_channel(str(guild.id))
+        
+        if achievement_channel_id:
+            channel = guild.get_channel(int(achievement_channel_id))
             if channel:
                 await channel.send(embed=embed)
             else:
-                # If channel not found, fall back to system channel
+                # If channel not found, fall back to level up channel
+                level_up_channel_id = await get_level_up_channel(str(guild.id))
+                if level_up_channel_id:
+                    channel = guild.get_channel(int(level_up_channel_id))
+                    if channel:
+                        await channel.send(embed=embed)
+                    else:
+                        # If level up channel not found, fall back to system channel
+                        if guild.system_channel:
+                            await guild.system_channel.send(embed=embed)
+                else:
+                    # If no level up channel set, use system channel
+                    if guild.system_channel:
+                        await guild.system_channel.send(embed=embed)
+        else:
+            # If no achievement channel set, try level up channel
+            level_up_channel_id = await get_level_up_channel(str(guild.id))
+            if level_up_channel_id:
+                channel = guild.get_channel(int(level_up_channel_id))
+                if channel:
+                    await channel.send(embed=embed)
+                else:
+                    # If level up channel not found, fall back to system channel
+                    if guild.system_channel:
+                        await guild.system_channel.send(embed=embed)
+            else:
+                # If no level up channel set, use system channel
                 if guild.system_channel:
                     await guild.system_channel.send(embed=embed)
-        else:
-            # If no level up channel set, use system channel
-            if guild.system_channel:
-                await guild.system_channel.send(embed=embed)
             
         logging.info(f"Sent achievement notification for {member.name}")
     except Exception as e:

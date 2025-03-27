@@ -83,7 +83,7 @@ async def create_quest(guild_id: str, name: str, description: str, quest_type: s
     
     # Use safe_db_operation for retries and error handling    
     quest_id = await safe_db_operation(
-        "_create_quest_internal", guild_id, name, description, quest_type,
+        "create_quest_internal", guild_id, name, description, quest_type,
         requirement_type, requirement_value, reward_xp, reward_multiplier,
         difficulty, refresh_cycle
     )
@@ -132,7 +132,7 @@ async def get_quest(quest_id: int) -> Optional[Dict]:
         return cached_quest
     
     # Get from database and cache the result
-    quest = await safe_db_operation("_get_quest_internal", quest_id)
+    quest = await safe_db_operation("get_quest_internal", quest_id)
     
     if quest:
         _set_in_cache(quest_cache, quest_id, quest)
@@ -201,7 +201,7 @@ async def update_quest(quest_id: int, guild_id: str, field: str, value: Any) -> 
     Returns:
     - bool: True if successful
     """
-    result = await safe_db_operation("_update_quest_internal", quest_id, guild_id, field, value)
+    result = await safe_db_operation("update_quest_internal", quest_id, guild_id, field, value)
     
     # Invalidate caches if successful
     if result:
@@ -248,7 +248,7 @@ async def delete_quest(quest_id: int, guild_id: str) -> bool:
     Returns:
     - bool: True if successful
     """
-    result = await safe_db_operation("_delete_quest_internal", quest_id, guild_id)
+    result = await safe_db_operation("delete_quest_internal", quest_id, guild_id)
     
     # Invalidate caches if successful
     if result:
@@ -315,7 +315,7 @@ async def get_guild_active_quests(guild_id: str, quest_type: str = None) -> List
         return cached_quests
     
     # Get from database and cache the result
-    quests = await safe_db_operation("_get_guild_active_quests_internal", guild_id, quest_type)
+    quests = await safe_db_operation("get_guild_active_quests_internal", guild_id, quest_type)
     
     if quests is not None:
         _set_in_cache(active_quests_cache, cache_key, quests)
@@ -358,7 +358,7 @@ async def mark_quests_inactive(guild_id: str, quest_type: str = None) -> bool:
     Returns:
     - bool: True if successful
     """
-    result = await safe_db_operation("_mark_quests_inactive_internal", guild_id, quest_type)
+    result = await safe_db_operation("mark_quests_inactive_internal", guild_id, quest_type)
     
     # Invalidate caches if successful
     if result:
@@ -398,29 +398,45 @@ async def _get_user_quest_progress_internal(guild_id: str, user_id: str, quest_i
         logging.error(f"Error getting quest progress: {e}")
         return 0, False, None
 
-async def get_user_quest_progress(guild_id: str, user_id: str, quest_id: int) -> Tuple[int, bool, Optional[datetime]]:
+async def get_user_quest_progress(guild_id: str, user_id: str, quest_id: int) -> Tuple[int, int, bool, Optional[datetime]]:
     """
     Get a user's progress for a specific quest
     
-    Parameters:
-    - guild_id: Guild ID
-    - user_id: User ID
-    - quest_id: Quest ID
-    
     Returns:
-    - Tuple of (progress, completed, completed_at)
+    - Tuple of (achievement_progress, quest_specific_progress, completed, completed_at)
     """
-    # We don't cache individual quest progress since it changes frequently
-    return await safe_db_operation("_get_user_quest_progress_internal", guild_id, user_id, quest_id)
+    # Implement your function to return both progress types
+    try:
+        async with get_connection() as conn:
+            query = """
+            SELECT progress, quest_specific_progress, completed, completed_at, expires_at
+            FROM user_quests
+            WHERE guild_id = $1 AND user_id = $2 AND quest_id = $3
+            """
+            row = await conn.fetchrow(query, guild_id, user_id, quest_id)
+            
+            if row:
+                # Check if quest has expired
+                if row['expires_at'] and row['expires_at'] < datetime.now() and not row['completed']:
+                    return row['progress'], row['quest_specific_progress'], False, None
+                return row['progress'], row['quest_specific_progress'], row['completed'], row['completed_at']
+            
+            # No progress record yet
+            return 0, 0, False, None
+            
+    except Exception as e:
+        logging.error(f"Error getting quest progress: {e}")
+        return 0, 0, False, None
 
-async def _update_user_quest_progress_internal(guild_id: str, user_id: str, quest_id: int, 
-                                              progress: int, completed: bool) -> bool:
+async def _update_user_quest_progress_internal(guild_id, user_id, quest_id, 
+                                            achievement_progress, quest_progress_increment=1,
+                                            completed=False):
     """Internal function to update user quest progress"""
     try:
         async with get_connection() as conn:
-            # Get the quest to determine expiration
+            # Get the quest to determine expiration and type
             quest_query = """
-            SELECT refresh_cycle
+            SELECT refresh_cycle, quest_type, requirement_type, requirement_value
             FROM quests
             WHERE id = $1 AND guild_id = $2
             """
@@ -428,7 +444,15 @@ async def _update_user_quest_progress_internal(guild_id: str, user_id: str, ques
             
             if not quest:
                 return False
-                
+            
+            # First check if user already has progress on this quest
+            check_query = """
+            SELECT quest_specific_progress, completed
+            FROM user_quests
+            WHERE guild_id = $1 AND user_id = $2 AND quest_id = $3
+            """
+            existing = await conn.fetchrow(check_query, guild_id, user_id, quest_id)
+            
             # Calculate expiration time based on refresh cycle
             expires_at = None
             if quest['refresh_cycle'] == 'daily':
@@ -437,30 +461,49 @@ async def _update_user_quest_progress_internal(guild_id: str, user_id: str, ques
                 expires_at = datetime.now() + timedelta(weeks=1)
             elif quest['refresh_cycle'] == 'monthly':
                 expires_at = datetime.now() + timedelta(days=30)
-                
+            
+            # Calculate quest-specific progress
+            if existing:
+                # Only increment if not already completed
+                if not existing['completed']:
+                    new_progress = existing['quest_specific_progress'] + quest_progress_increment
+                    # Check if the quest should be completed
+                    if new_progress >= quest['requirement_value']:
+                        completed = True
+                else:
+                    # Already completed, don't change progress
+                    new_progress = existing['quest_specific_progress']
+            else:
+                # New record, start with increment
+                new_progress = quest_progress_increment
+                if new_progress >= quest['requirement_value']:
+                    completed = True
+            
             # Set completed_at if completing the quest
-            completed_at = 'CURRENT_TIMESTAMP' if completed else 'NULL'
+            completed_at = 'CURRENT_TIMESTAMP' if completed and not (existing and existing['completed']) else 'NULL'
             
             # Insert or update progress
             query = f"""
             INSERT INTO user_quests 
-                (guild_id, user_id, quest_id, progress, completed, completed_at, expires_at)
+                (guild_id, user_id, quest_id, progress, quest_specific_progress, completed, completed_at, expires_at)
             VALUES 
-                ($1, $2, $3, $4, $5, {completed_at}, $6)
+                ($1, $2, $3, $4, $5, $6, {completed_at}, $7)
             ON CONFLICT (guild_id, user_id, quest_id) 
             DO UPDATE SET 
                 progress = $4,
-                completed = $5,
+                quest_specific_progress = $5,
+                completed = $6,
                 completed_at = CASE WHEN 
-                    user_quests.completed = false AND $5 = true 
+                    user_quests.completed = false AND $6 = true 
                     THEN CURRENT_TIMESTAMP 
                     ELSE user_quests.completed_at 
                 END,
-                expires_at = $6
+                expires_at = $7
             RETURNING id
             """
             
-            result = await conn.fetchval(query, guild_id, user_id, quest_id, progress, completed, expires_at)
+            result = await conn.fetchval(query, guild_id, user_id, quest_id, 
+                                      achievement_progress, new_progress, completed, expires_at)
             return result is not None
                 
     except Exception as e:
@@ -506,6 +549,7 @@ async def _get_user_active_quests_internal(guild_id: str, user_id: str) -> List[
                    q.requirement_value, q.reward_xp, q.reward_multiplier, 
                    q.difficulty, q.refresh_cycle,
                    COALESCE(uq.progress, 0) as progress,
+                   COALESCE(uq.quest_specific_progress, 0) as quest_specific_progress,  
                    COALESCE(uq.completed, false) as completed,
                    uq.completed_at, uq.expires_at
             FROM quests q
@@ -544,7 +588,7 @@ async def get_user_active_quests(guild_id: str, user_id: str) -> List[Dict]:
         return cached_quests
     
     # Get from database and cache the result
-    quests = await safe_db_operation("_get_user_active_quests_internal", guild_id, user_id)
+    quests = await safe_db_operation("get_user_active_quests_internal", guild_id, user_id)
     
     if quests is not None:
         _set_in_cache(user_quest_cache, cache_key, quests)
@@ -617,7 +661,7 @@ async def get_user_quest_stats(guild_id: str, user_id: str) -> Dict:
         return cached_stats
     
     # Get from database and cache the result
-    stats = await safe_db_operation("_get_user_quest_stats_internal", guild_id, user_id)
+    stats = await safe_db_operation("get_user_quest_stats_internal", guild_id, user_id)
     
     if stats is not None:
         _set_in_cache(user_quest_stats_cache, cache_key, stats)
@@ -660,7 +704,21 @@ async def check_quest_progress(guild_id: str, user_id: str, counter_type: str, c
             
             for quest in quests:
                 # Get current progress
-                progress, completed, _ = await _get_user_quest_progress_internal(guild_id, user_id, quest['id'])
+                progress_query = """
+                SELECT progress, quest_specific_progress, completed
+                FROM user_quests
+                WHERE guild_id = $1 AND user_id = $2 AND quest_id = $3
+                """
+                progress_row = await conn.fetchrow(progress_query, guild_id, user_id, quest['id'])
+                
+                if progress_row:
+                    progress = progress_row['progress']
+                    quest_specific_progress = progress_row['quest_specific_progress']
+                    completed = progress_row['completed']
+                else:
+                    progress = 0
+                    quest_specific_progress = 0
+                    completed = False
                 
                 # Skip if already completed
                 if completed:
@@ -670,17 +728,21 @@ async def check_quest_progress(guild_id: str, user_id: str, counter_type: str, c
                 if quest['requirement_value'] is None:
                     logging.error(f"Invalid requirement_value (None) for quest {quest['id']}")
                     continue
-                    
-                # Check if the quest requirement is now met
-                is_completed = counter_value >= quest['requirement_value']
+                
+                # Update the quest-specific progress by 1 for this action
+                quest_progress_increment = 1
+                new_progress = quest_specific_progress + quest_progress_increment
+                
+                # Check if this update will complete the quest
+                will_complete = new_progress >= quest['requirement_value']
                 
                 # Update the progress
-                await _update_user_quest_progress_internal(
-                    guild_id, user_id, quest['id'], counter_value, is_completed
+                success = await _update_user_quest_progress_internal(
+                    guild_id, user_id, quest['id'], counter_value, quest_progress_increment, will_complete
                 )
                 
                 # If newly completed, add to list
-                if is_completed:
+                if will_complete and success:
                     newly_completed.append({
                         "id": quest['id'],
                         "name": quest['name'],
@@ -722,7 +784,8 @@ async def award_quest_rewards(guild_id: str, user_id: str, quest_id: int, member
             return False
             
         # Get progress to verify completion
-        progress, completed, _ = await get_user_quest_progress(guild_id, user_id, quest_id)
+        # Updated to handle the new return value format
+        achievement_progress, quest_specific_progress, completed, completed_at = await get_user_quest_progress(guild_id, user_id, quest_id)
         if not completed:
             return False
             

@@ -125,8 +125,9 @@ class QuestCommands(commands.Cog):
             
         quest_text = ""
         for quest in quests:
-            # Format progress bar (10 segments)
-            progress_pct = min(100, int((quest['progress'] / quest['requirement_value']) * 100))
+            # Format progress bar (10 segments) using quest_specific_progress instead of progress
+            quest_specific_progress = quest.get('quest_specific_progress', 0)  # Get the new field, default to 0
+            progress_pct = min(100, int((quest_specific_progress / quest['requirement_value']) * 100))
             segments = 10
             filled = int((progress_pct / 100) * segments)
             
@@ -152,10 +153,10 @@ class QuestCommands(commands.Cog):
             else:
                 status = "🔄"
             
-            # Add to text
+            # Add to text - updated to show quest_specific_progress
             quest_text += f"**[{quest['id']}] {quest['name']}** {status}\n"
             quest_text += f"{quest['description']}\n"
-            quest_text += f"Progress: {progress_bar} {quest['progress']}/{quest['requirement_value']} "
+            quest_text += f"Progress: {progress_bar} {quest_specific_progress}/{quest['requirement_value']} "
             quest_text += f"({progress_pct}%)\n"
             if expires:
                 quest_text += f"{expires}\n"
@@ -182,7 +183,7 @@ class QuestCommands(commands.Cog):
             return
         
         # Get user's progress
-        progress, completed, completed_at = await get_user_quest_progress(guild_id, user_id, quest_id)
+        progress, quest_specific_progress, completed, completed_at = await get_user_quest_progress(guild_id, user_id, quest_id)
         
         # Format requirement
         req_type_names = {
@@ -198,12 +199,12 @@ class QuestCommands(commands.Cog):
         if quest['requirement_type'] == 'voice_time_seconds':
             minutes = quest['requirement_value'] // 60
             requirement = f"Spend {minutes} minutes in voice"
-            progress_display = f"{progress // 60}/{minutes} minutes"
+            progress_display = f"{quest_specific_progress  // 60}/{minutes} minutes"
         else:
-            progress_display = f"{progress}/{quest['requirement_value']}"
+            progress_display = f"{quest_specific_progress }/{quest['requirement_value']}"
         
         # Calculate progress percentage
-        progress_pct = min(100, int((progress / quest['requirement_value']) * 100))
+        progress_pct = min(100, int((quest_specific_progress  / quest['requirement_value']) * 100))
         
         # Create embed
         embed = discord.Embed(
@@ -528,7 +529,7 @@ class QuestCommands(commands.Cog):
             return
         
         # Get user's progress
-        progress, completed, completed_at = await get_user_quest_progress(guild_id, user_id, quest_id)
+        progress, quest_specific_progress, completed, completed_at = await get_user_quest_progress(guild_id, user_id, quest_id)
         
         # Format requirement
         req_type_names = {
@@ -544,12 +545,12 @@ class QuestCommands(commands.Cog):
         if quest['requirement_type'] == 'voice_time_seconds':
             minutes = quest['requirement_value'] // 60
             requirement = f"Spend {minutes} minutes in voice"
-            progress_display = f"{progress // 60}/{minutes} minutes"
+            progress_display = f"{quest_specific_progress  // 60}/{minutes} minutes"
         else:
-            progress_display = f"{progress}/{quest['requirement_value']}"
+            progress_display = f"{quest_specific_progress }/{quest['requirement_value']}"
         
         # Calculate progress percentage
-        progress_pct = min(100, int((progress / quest['requirement_value']) * 100))
+        progress_pct = min(100, int((quest_specific_progress  / quest['requirement_value']) * 100))
         
         # Create embed
         embed = discord.Embed(

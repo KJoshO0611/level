@@ -60,8 +60,9 @@ async def init_db(bot):
 
         # Run migrations
         # This will add the guild_id column to the achievements table if it doesn't exist
-        from utils.database_migration import update_achievement_schema
+        from utils.database_migration import update_achievement_schema, update_server_config_schema
         await update_achievement_schema(bot)
+        await update_server_config_schema(bot)
 
         # Load channel boosts
         from .config import load_channel_boosts
@@ -213,7 +214,7 @@ async def _create_tables(bot):
             ''')
 
             # Table for Quests
-            await conn.execute('''CREATE TABLE quests (
+            await conn.execute('''CREATE TABLE IF NOT EXISTS quests (
                     id SERIAL PRIMARY KEY,
                     guild_id TEXT NOT NULL,
                     name TEXT NOT NULL,
@@ -233,7 +234,7 @@ async def _create_tables(bot):
             
             # Table for user quests
             await conn.execute('''
-                CREATE TABLE user_quests (
+                CREATE TABLE IF NOT EXISTS user_quests (
                     id SERIAL PRIMARY KEY,
                     guild_id TEXT NOT NULL,
                     user_id TEXT NOT NULL,

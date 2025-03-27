@@ -14,7 +14,9 @@ from database import (
     check_quest_progress,
     award_quest_rewards,
     get_user_active_quests,
-    create_quest
+    create_quest,
+    get_quest_channel,
+    get_level_up_channel
 )
 
 # ===== QUEST INTEGRATION FUNCTIONS =====
@@ -148,7 +150,43 @@ async def send_quest_completion_notification(channel, user, quest):
         embed.set_thumbnail(url=user.avatar.url)
     
     try:
-        await channel.send(embed=embed)
+        # Try to get quest channel first
+        quest_channel_id = await get_quest_channel(str(channel.guild.id))
+        
+        if quest_channel_id:
+            quest_channel = channel.guild.get_channel(int(quest_channel_id))
+            if quest_channel:
+                await quest_channel.send(embed=embed)
+            else:
+                # If quest channel not found, fall back to level up channel
+                level_up_channel_id = await get_level_up_channel(str(channel.guild.id))
+                if level_up_channel_id:
+                    level_channel = channel.guild.get_channel(int(level_up_channel_id))
+                    if level_channel:
+                        await level_channel.send(embed=embed)
+                    else:
+                        # If level up channel not found, fall back to system channel
+                        if channel.guild.system_channel:
+                            await channel.guild.system_channel.send(embed=embed)
+                else:
+                    # If no level up channel set, use system channel
+                    if channel.guild.system_channel:
+                        await channel.guild.system_channel.send(embed=embed)
+        else:
+            # If no quest channel set, try level up channel
+            level_up_channel_id = await get_level_up_channel(str(channel.guild.id))
+            if level_up_channel_id:
+                level_channel = channel.guild.get_channel(int(level_up_channel_id))
+                if level_channel:
+                    await level_channel.send(embed=embed)
+                else:
+                    # If level up channel not found, fall back to system channel
+                    if channel.guild.system_channel:
+                        await channel.guild.system_channel.send(embed=embed)
+            else:
+                # If no level up channel set, use system channel
+                if channel.guild.system_channel:
+                    await channel.guild.system_channel.send(embed=embed)
     except Exception as e:
         logging.error(f"Failed to send quest completion notification: {e}")
 

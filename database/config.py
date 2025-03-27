@@ -397,3 +397,91 @@ async def get_event_channel(guild_id: str):
             _set_in_cache(config_cache, f"{guild_id}_event", channel_id)
         
         return channel_id
+
+async def _set_achievement_channel(guild_id: str, channel_id: str):
+    """Set achievement channel with transaction protection"""
+    async with get_connection() as conn:
+        query = """
+        INSERT INTO server_config (guild_id, level_up_channel, achievement_channel) 
+        VALUES ($1, $2, $3)
+        ON CONFLICT (guild_id) 
+        DO UPDATE SET achievement_channel = $3
+        """
+        await conn.execute(query, guild_id, channel_id, channel_id)
+        
+        # Update cache
+        _set_in_cache(config_cache, f"{guild_id}_achievement", channel_id)
+
+async def set_achievement_channel(guild_id: str, channel_id: str):
+    """Set the achievement notification channel with safety wrapper"""
+    result = await safe_db_operation("set_achievement_channel", guild_id, channel_id)
+    
+    # Update cache
+    if result is not None:
+        _set_in_cache(config_cache, f"{guild_id}_achievement", channel_id)
+    
+    return result
+
+async def get_achievement_channel(guild_id: str):
+    """Get achievement channel with caching"""
+    # Try cache first
+    cached_value = _get_from_cache(config_cache, f"{guild_id}_achievement")
+    if cached_value is not None:
+        return cached_value
+    
+    # If not in cache, get from database
+    async with get_connection() as conn:
+        query = "SELECT achievement_channel FROM server_config WHERE guild_id = $1"
+        row = await conn.fetchrow(query, guild_id)
+        
+        channel_id = row['achievement_channel'] if row else None
+        
+        # Store in cache if found
+        if channel_id is not None:
+            _set_in_cache(config_cache, f"{guild_id}_achievement", channel_id)
+        
+        return channel_id
+
+async def _set_quest_channel(guild_id: str, channel_id: str):
+    """Set quest channel with transaction protection"""
+    async with get_connection() as conn:
+        query = """
+        INSERT INTO server_config (guild_id, level_up_channel, quest_channel) 
+        VALUES ($1, $2, $3)
+        ON CONFLICT (guild_id) 
+        DO UPDATE SET quest_channel = $3
+        """
+        await conn.execute(query, guild_id, channel_id, channel_id)
+        
+        # Update cache
+        _set_in_cache(config_cache, f"{guild_id}_quest", channel_id)
+
+async def set_quest_channel(guild_id: str, channel_id: str):
+    """Set the quest notification channel with safety wrapper"""
+    result = await safe_db_operation("set_quest_channel", guild_id, channel_id)
+    
+    # Update cache
+    if result is not None:
+        _set_in_cache(config_cache, f"{guild_id}_quest", channel_id)
+    
+    return result
+
+async def get_quest_channel(guild_id: str):
+    """Get quest channel with caching"""
+    # Try cache first
+    cached_value = _get_from_cache(config_cache, f"{guild_id}_quest")
+    if cached_value is not None:
+        return cached_value
+    
+    # If not in cache, get from database
+    async with get_connection() as conn:
+        query = "SELECT quest_channel FROM server_config WHERE guild_id = $1"
+        row = await conn.fetchrow(query, guild_id)
+        
+        channel_id = row['quest_channel'] if row else None
+        
+        # Store in cache if found
+        if channel_id is not None:
+            _set_in_cache(config_cache, f"{guild_id}_quest", channel_id)
+        
+        return channel_id

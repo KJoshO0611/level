@@ -16,6 +16,8 @@ from database import (
     get_server_xp_settings,
     update_server_xp_settings,
     reset_server_xp_settings,
+    set_achievement_channel,
+    set_quest_channel,
 )
 from config import load_config, XP_SETTINGS
 
@@ -456,6 +458,34 @@ class ConfigCommands(commands.Cog):
         else:
             await interaction.response.send_message("❌ Failed to reset XP settings", ephemeral=True)
     
+    @app_commands.command(name="setachievementchannel", description="Set the channel for achievement notifications")
+    @app_commands.describe(channel="The channel where achievement notifications will be sent")
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def set_achievement_channel(self, interaction: discord.Interaction, channel: discord.TextChannel):
+        """Set the channel for achievement notifications using slash command"""
+        guild_id = str(interaction.guild.id)
+        channel_id = str(channel.id)
+        
+        await set_achievement_channel(guild_id, channel_id)
+        await interaction.response.send_message(
+            f"✅ Achievement notifications will now be sent to {channel.mention}",
+            ephemeral=True
+        )
+    
+    @app_commands.command(name="setquestchannel", description="Set the channel for quest notifications")
+    @app_commands.describe(channel="The channel where quest notifications will be sent")
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def set_quest_channel(self, interaction: discord.Interaction, channel: discord.TextChannel):
+        """Set the channel for quest notifications using slash command"""
+        guild_id = str(interaction.guild.id)
+        channel_id = str(channel.id)
+        
+        await set_quest_channel(guild_id, channel_id)
+        await interaction.response.send_message(
+            f"✅ Quest notifications will now be sent to {channel.mention}",
+            ephemeral=True
+        )
+
 # Setup function for the cog
 async def setup(bot):
     await bot.add_cog(ConfigCommands(bot))

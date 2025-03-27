@@ -46,3 +46,56 @@ async def update_achievement_schema(bot):
     except Exception as e:
         logging.error(f"Error migrating achievements table: {e}")
         return False
+
+async def update_server_config_schema(bot):
+    """
+    Add achievement_channel and quest_channel columns to server_config table if they don't exist
+    
+    This function is called during database initialization to migrate
+    the server_config table schema if needed.
+    """
+    try:
+        async with bot.db.acquire() as conn:
+            # Check if achievement_channel column exists
+            check_query = """
+            SELECT column_name 
+            FROM information_schema.columns 
+            WHERE table_name = 'server_config' AND column_name = 'achievement_channel'
+            """
+            
+            has_achievement_channel = await conn.fetchval(check_query)
+            
+            # If achievement_channel column doesn't exist, add it
+            if not has_achievement_channel:
+                logging.info("Migrating server_config table to add achievement_channel column")
+                
+                async with conn.transaction():
+                    # Add the achievement_channel column
+                    await conn.execute("ALTER TABLE server_config ADD COLUMN achievement_channel TEXT")
+                    
+                logging.info("Successfully added achievement_channel column")
+            
+            # Check if quest_channel column exists
+            check_query = """
+            SELECT column_name 
+            FROM information_schema.columns 
+            WHERE table_name = 'server_config' AND column_name = 'quest_channel'
+            """
+            
+            has_quest_channel = await conn.fetchval(check_query)
+            
+            # If quest_channel column doesn't exist, add it
+            if not has_quest_channel:
+                logging.info("Migrating server_config table to add quest_channel column")
+                
+                async with conn.transaction():
+                    # Add the quest_channel column
+                    await conn.execute("ALTER TABLE server_config ADD COLUMN quest_channel TEXT")
+                    
+                logging.info("Successfully added quest_channel column")
+            
+            return True
+            
+    except Exception as e:
+        logging.error(f"Error migrating server_config table: {e}")
+        return False

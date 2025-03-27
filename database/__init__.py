@@ -45,7 +45,11 @@ from .config import (
     CHANNEL_XP_BOOSTS,
     get_server_xp_settings,
     update_server_xp_settings,
-    reset_server_xp_settings
+    reset_server_xp_settings,
+    set_achievement_channel,
+    get_achievement_channel,
+    set_quest_channel,
+    get_quest_channel
 )
 
 from .events import (
@@ -114,7 +118,8 @@ __all__ = [
     'set_level_up_channel', 'get_level_up_channel', 'create_level_role', 'get_level_roles',
     'delete_level_role', 'set_channel_boost_db', 'remove_channel_boost_db', 'load_channel_boosts',
     'apply_channel_boost', 'CHANNEL_XP_BOOSTS', 'get_server_xp_settings', 'update_server_xp_settings',
-    'reset_server_xp_settings',
+    'reset_server_xp_settings', 'set_achievement_channel', 'get_achievement_channel',
+    'set_quest_channel', 'get_quest_channel',
     
     # Events
     'create_xp_boost_event', 'get_active_xp_boost_events', 'get_upcoming_xp_boost_events',

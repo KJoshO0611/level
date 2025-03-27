@@ -134,7 +134,13 @@ async def safe_db_operation(func_name: str, *args, **kwargs):
                                      _create_achievement_internal, _get_achievement_leaderboard_internal,
                                      _get_achievement_stats_internal, _update_achievement_internal,
                                      _delete_achievement_internal)
-            
+            from .quests import (_create_quest_internal, _get_quest_internal, _update_quest_internal,
+                    _delete_quest_internal, _get_guild_active_quests_internal,
+                    _mark_quests_inactive_internal, _get_user_quest_progress_internal,
+                    _update_user_quest_progress_internal, _get_user_active_quests_internal,
+                    _get_user_quest_stats_internal)
+
+
             # Map function name to actual function
             function_map = {
                 "get_or_create_user_level": _get_or_create_user_level,
@@ -154,7 +160,17 @@ async def safe_db_operation(func_name: str, *args, **kwargs):
                 "get_achievement_leaderboard_internal": _get_achievement_leaderboard_internal,
                 "get_achievement_stats_internal": _get_achievement_stats_internal,
                 "update_achievement_internal": _update_achievement_internal,
-                "delete_achievement_internal": _delete_achievement_internal
+                "delete_achievement_internal": _delete_achievement_internal,
+                "create_quest_internal": _create_quest_internal,
+                "get_quest_internal": _get_quest_internal,
+                "update_quest_internal": _update_quest_internal,
+                "delete_quest_internal": _delete_quest_internal,
+                "get_guild_active_quests_internal": _get_guild_active_quests_internal,
+                "mark_quests_inactive_internal": _mark_quests_inactive_internal,
+                "get_user_quest_progress_internal": _get_user_quest_progress_internal,
+                "update_user_quest_progress_internal": _update_user_quest_progress_internal,
+                "get_user_active_quests_internal": _get_user_active_quests_internal,
+                "get_user_quest_stats_internal": _get_user_quest_stats_internal
             }
             
             if func_name not in function_map:
