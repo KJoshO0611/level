@@ -127,13 +127,15 @@ async def safe_db_operation(func_name: str, *args, **kwargs):
             from .users import _get_or_create_user_level, _update_user_xp
             from .config import (_set_level_up_channel, _set_channel_boost_db, 
                                 _remove_channel_boost_db, _update_server_xp_settings, 
-                                _reset_server_xp_settings)
+                                _reset_server_xp_settings, _set_achievement_channel,
+                                _set_quest_channel)
             from .events import _create_xp_boost_event, _delete_xp_boost_event
             from .backgrounds import _set_user_background, _remove_user_background
             from .achievements import (_update_activity_counter_internal, _get_user_achievements_internal, 
                                      _create_achievement_internal, _get_achievement_leaderboard_internal,
                                      _get_achievement_stats_internal, _update_achievement_internal,
-                                     _delete_achievement_internal)
+                                     _delete_achievement_internal, _get_user_selected_title_internal,
+                                     _set_user_selected_title_internal)
             from .quests import (_create_quest_internal, _get_quest_internal, _update_quest_internal,
                     _delete_quest_internal, _get_guild_active_quests_internal,
                     _mark_quests_inactive_internal, _get_user_quest_progress_internal,
@@ -161,6 +163,8 @@ async def safe_db_operation(func_name: str, *args, **kwargs):
                 "get_achievement_stats_internal": _get_achievement_stats_internal,
                 "update_achievement_internal": _update_achievement_internal,
                 "delete_achievement_internal": _delete_achievement_internal,
+                "get_user_selected_title_internal": _get_user_selected_title_internal,
+                "set_user_selected_title_internal": _set_user_selected_title_internal,
                 "create_quest_internal": _create_quest_internal,
                 "get_quest_internal": _get_quest_internal,
                 "update_quest_internal": _update_quest_internal,
@@ -170,7 +174,9 @@ async def safe_db_operation(func_name: str, *args, **kwargs):
                 "get_user_quest_progress_internal": _get_user_quest_progress_internal,
                 "update_user_quest_progress_internal": _update_user_quest_progress_internal,
                 "get_user_active_quests_internal": _get_user_active_quests_internal,
-                "get_user_quest_stats_internal": _get_user_quest_stats_internal
+                "get_user_quest_stats_internal": _get_user_quest_stats_internal,
+                "set_achievement_channel": _set_achievement_channel,
+                "set_quest_channel": _set_quest_channel
             }
             
             if func_name not in function_map:

@@ -10,7 +10,9 @@ from database import (
     create_achievement_db,
     get_user_achievements_db,
     get_achievement_leaderboard_db,
-    get_achievement_stats_db
+    get_achievement_stats_db,
+    get_user_selected_title_db,
+    set_user_selected_title_db
 )
 from config import load_config
 
@@ -293,6 +295,52 @@ class AchievementCommands(commands.Cog):
             else:
                 await ctx.send("❌ Failed to update achievement badge. Please try again.")
     
+    @achievement.command(name="viewbadge")
+    async def view_achievement_badge(self, ctx, achievement_id: int):
+        """
+        View the badge for an achievement in this guild.
+        
+        Example: !!achievement viewbadge 1
+        """
+        guild_id = str(ctx.guild.id)
+        
+        async with self.bot.db.acquire() as conn:
+            query = """
+            SELECT name, description, icon_path
+            FROM achievements
+            WHERE id = $1 AND guild_id = $2
+            """
+            achievement = await conn.fetchrow(query, achievement_id, guild_id)
+            
+            if not achievement:
+                await ctx.send(f"❌ Achievement with ID {achievement_id} not found in this server.")
+                return
+            
+            if not achievement['icon_path']:
+                await ctx.send(f"❌ Achievement #{achievement_id} ({achievement['name']}) does not have a badge set.")
+                return
+            
+            # Construct the full path to the badge
+            badge_path = os.path.join(EXTERNAL_VOLUME_PATH, achievement['icon_path'])
+            
+            # Check if the file exists
+            if not os.path.exists(badge_path):
+                await ctx.send(f"❌ Badge file for achievement #{achievement_id} not found.")
+                return
+            
+            # Create embed with achievement info and badge
+            embed = discord.Embed(
+                title=f"Badge for {achievement['name']}",
+                description=achievement['description'],
+                color=discord.Color.blue()
+            )
+            
+            # Create a file object from the badge
+            file = discord.File(badge_path, filename=f"badge_{achievement_id}.png")
+            embed.set_image(url=f"attachment://badge_{achievement_id}.png")
+            
+            await ctx.send(embed=embed, file=file)
+    
     @achievement.command(name="stats")
     async def achievement_stats(self, ctx):
         """View achievement statistics for this server"""
@@ -463,6 +511,150 @@ class AchievementCommands(commands.Cog):
             )
         
         await interaction.response.send_message(embed=embed)
+
+    @app_commands.command(name="achievementbadge", description="View the badge for an achievement")
+    @app_commands.describe(achievement_id="The ID of the achievement to view")
+    async def slash_view_achievement_badge(self, interaction: discord.Interaction, achievement_id: int):
+        """View the badge for an achievement using slash command"""
+        guild_id = str(interaction.guild.id)
+        
+        async with self.bot.db.acquire() as conn:
+            query = """
+            SELECT name, description, icon_path
+            FROM achievements
+            WHERE id = $1 AND guild_id = $2
+            """
+            achievement = await conn.fetchrow(query, achievement_id, guild_id)
+            
+            if not achievement:
+                await interaction.response.send_message(
+                    f"❌ Achievement with ID {achievement_id} not found in this server.",
+                    ephemeral=True
+                )
+                return
+            
+            if not achievement['icon_path']:
+                await interaction.response.send_message(
+                    f"❌ Achievement #{achievement_id} ({achievement['name']}) does not have a badge set.",
+                    ephemeral=True
+                )
+                return
+            
+            # Construct the full path to the badge
+            badge_path = os.path.join(EXTERNAL_VOLUME_PATH, achievement['icon_path'])
+            
+            # Check if the file exists
+            if not os.path.exists(badge_path):
+                await interaction.response.send_message(
+                    f"❌ Badge file for achievement #{achievement_id} not found.",
+                    ephemeral=True
+                )
+                return
+            
+            # Create embed with achievement info and badge
+            embed = discord.Embed(
+                title=f"Badge for {achievement['name']}",
+                description=achievement['description'],
+                color=discord.Color.blue()
+            )
+            
+            # Create a file object from the badge
+            file = discord.File(badge_path, filename=f"badge_{achievement_id}.png")
+            embed.set_image(url=f"attachment://badge_{achievement_id}.png")
+            
+            await interaction.response.send_message(embed=embed, file=file, ephemeral=True)
+
+    @app_commands.command(name="settitle", description="Set your achievement title display for level cards")
+    @app_commands.describe(
+        title="The achievement title to display or leave empty to clear your title"
+    )
+    async def slash_set_title(self, interaction: discord.Interaction, title: str = None):
+        """Set your achievement title display for level cards"""
+        await interaction.response.defer(ephemeral=True)
+        
+        guild_id = str(interaction.guild.id)
+        user_id = str(interaction.user.id)
+        
+        # If title is empty, clear the user's title
+        if not title:
+            success = await set_user_selected_title_db(guild_id, user_id, None)
+            if success:
+                await interaction.followup.send("Your title has been cleared.", ephemeral=True)
+            else:
+                await interaction.followup.send("Failed to clear your title. Please try again later.", ephemeral=True)
+            return
+        
+        # Get user achievements to validate the title
+        achievements_data = await get_user_achievements_db(guild_id, user_id)
+        completed_achievements = achievements_data.get("completed", [])
+        
+        # Check if user has completed achievements
+        if not completed_achievements:
+            await interaction.followup.send(
+                "You don't have any completed achievements yet. Complete achievements to set a title!",
+                ephemeral=True
+            )
+            return
+        
+        # Check if title is too long
+        if len(title) > 30:
+            await interaction.followup.send(
+                "Your title is too long. Please choose a shorter title (max 30 characters).",
+                ephemeral=True
+            )
+            return
+            
+        # Set the title
+        success = await set_user_selected_title_db(guild_id, user_id, title)
+        
+        if success:
+            title_display = f"«{title}»"
+            await interaction.followup.send(
+                f"Your title has been set to {title_display}. It will be displayed on your level card.",
+                ephemeral=True
+            )
+        else:
+            await interaction.followup.send(
+                "Failed to set your title. Please try again later.",
+                ephemeral=True
+            )
+    
+    @app_commands.command(name="viewtitle", description="View your current achievement title")
+    async def slash_view_title(self, interaction: discord.Interaction, member: Optional[discord.Member] = None):
+        """View your current achievement title"""
+        await interaction.response.defer(ephemeral=True)
+        
+        guild_id = str(interaction.guild.id)
+        
+        # If member is specified, view their title
+        target_member = member or interaction.user
+        user_id = str(target_member.id)
+        
+        title = await get_user_selected_title_db(guild_id, user_id)
+        
+        if title:
+            title_display = f"«{title}»"
+            if member:
+                await interaction.followup.send(
+                    f"{target_member.display_name}'s current title is set to {title_display}.",
+                    ephemeral=True
+                )
+            else:
+                await interaction.followup.send(
+                    f"Your current title is set to {title_display}.",
+                    ephemeral=True
+                )
+        else:
+            if member:
+                await interaction.followup.send(
+                    f"{target_member.display_name} doesn't have a title set.",
+                    ephemeral=True
+                )
+            else:
+                await interaction.followup.send(
+                    "You don't have a title set. Use `/settitle` to set one!",
+                    ephemeral=True
+                )
 
 async def setup(bot):
     await bot.add_cog(AchievementCommands(bot))

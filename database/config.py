@@ -402,12 +402,12 @@ async def _set_achievement_channel(guild_id: str, channel_id: str):
     """Set achievement channel with transaction protection"""
     async with get_connection() as conn:
         query = """
-        INSERT INTO server_config (guild_id, level_up_channel, achievement_channel) 
-        VALUES ($1, $2, $3)
+        INSERT INTO server_config (guild_id, achievement_channel) 
+        VALUES ($1, $2)
         ON CONFLICT (guild_id) 
-        DO UPDATE SET achievement_channel = $3
+        DO UPDATE SET achievement_channel = $2
         """
-        await conn.execute(query, guild_id, channel_id, channel_id)
+        await conn.execute(query, guild_id, channel_id)
         
         # Update cache
         _set_in_cache(config_cache, f"{guild_id}_achievement", channel_id)
@@ -446,12 +446,12 @@ async def _set_quest_channel(guild_id: str, channel_id: str):
     """Set quest channel with transaction protection"""
     async with get_connection() as conn:
         query = """
-        INSERT INTO server_config (guild_id, level_up_channel, quest_channel) 
-        VALUES ($1, $2, $3)
+        INSERT INTO server_config (guild_id, quest_channel) 
+        VALUES ($1, $2)
         ON CONFLICT (guild_id) 
-        DO UPDATE SET quest_channel = $3
+        DO UPDATE SET quest_channel = $2
         """
-        await conn.execute(query, guild_id, channel_id, channel_id)
+        await conn.execute(query, guild_id, channel_id)
         
         # Update cache
         _set_in_cache(config_cache, f"{guild_id}_quest", channel_id)

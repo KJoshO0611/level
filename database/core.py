@@ -59,10 +59,8 @@ async def init_db(bot):
         await _create_tables(bot)
 
         # Run migrations
-        # This will add the guild_id column to the achievements table if it doesn't exist
-        from utils.database_migration import update_achievement_schema, update_server_config_schema
-        await update_achievement_schema(bot)
-        await update_server_config_schema(bot)
+        from utils.database_migration import run_all_migrations
+        await run_all_migrations(bot)
 
         # Load channel boosts
         from .config import load_channel_boosts

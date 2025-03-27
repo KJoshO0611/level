@@ -70,7 +70,9 @@ from .achievements import (
     get_guild_achievements, 
     get_achievement_by_id,
     update_achievement,
-    delete_achievement
+    delete_achievement,
+    get_user_selected_title_db,
+    set_user_selected_title_db
 )
 
 from .backgrounds import (
@@ -129,6 +131,7 @@ __all__ = [
     'update_activity_counter_db', 'get_user_achievements_db', 'create_achievement_db',
     'get_achievement_leaderboard_db', 'get_achievement_stats_db', 'get_guild_achievements',
     'get_achievement_by_id', 'update_achievement', 'delete_achievement',
+    'get_user_selected_title_db', 'set_user_selected_title_db',
     
     # Backgrounds
     'set_user_background', 'get_user_background', 'remove_user_background',

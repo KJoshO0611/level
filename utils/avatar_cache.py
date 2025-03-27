@@ -132,12 +132,13 @@ class AvatarCache:
 # Create global instance
 avatar_cache = AvatarCache(max_size=200, ttl=3600)
 
-async def get_cached_avatar(member):
+async def get_cached_avatar(member, bot=None):
     """
     Get avatar for a Discord member, using cache when possible
     
     Parameters:
     - member: discord.Member object
+    - bot: Optional bot instance (not used but included for compatibility)
     
     Returns:
     - bytes: Avatar image data

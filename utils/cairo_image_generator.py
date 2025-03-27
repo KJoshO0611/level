@@ -542,10 +542,57 @@ def initialize_template_cache():
 # Call initialization during module import
 initialize_template_cache()
 
+def rounded_rectangle(ctx, x, y, width, height, radius):
+    """Helper function to draw rounded rectangle in Cairo"""
+    # Top left corner
+    ctx.move_to(x + radius, y)
+    # Top right corner
+    ctx.line_to(x + width - radius, y)
+    ctx.arc(x + width - radius, y + radius, radius, -math.pi/2, 0)
+    # Bottom right corner
+    ctx.line_to(x + width, y + height - radius)
+    ctx.arc(x + width - radius, y + height - radius, radius, 0, math.pi/2)
+    # Bottom left corner
+    ctx.line_to(x + radius, y + height)
+    ctx.arc(x + radius, y + height - radius, radius, math.pi/2, math.pi)
+    # Back to top left
+    ctx.line_to(x, y + radius)
+    ctx.arc(x + radius, y + radius, radius, math.pi, 3*math.pi/2)
+    ctx.close_path()
+
+def draw_placeholder_badge(ctx, badge_x, badge_y, badge_size):
+    """Draw a placeholder star when badge image cannot be loaded"""
+    # Draw star inside
+    ctx.set_source_rgb(1, 1, 1)
+    star_size = badge_size * 0.6
+    center_x = badge_x + badge_size/2
+    center_y = badge_y + badge_size/2
+    
+    # Draw a simple star
+    points = 5
+    outer_radius = star_size/2
+    inner_radius = outer_radius/2
+    
+    ctx.move_to(center_x, center_y - outer_radius)
+    
+    for i in range(points * 2):
+        radius = inner_radius if i % 2 else outer_radius
+        angle = math.pi * i / points - math.pi/2
+        x = center_x + radius * math.cos(angle)
+        y = center_y + radius * math.sin(angle)
+        ctx.line_to(x, y)
+    
+    ctx.close_path()
+    ctx.fill()
+
 def _generate_level_card_cairo_sync(avatar_bytes, username, user_id, level, xp, xp_needed, 
                                    background_path=None, rank=None, status="online", 
-                                   status_pos_x=80, status_pos_y=90):
-    """Generate a Discord-style level card image using Cairo with memory optimizations"""
+                                   status_pos_x=80, status_pos_y=90,
+                                   achievements=None, selected_title=None):
+    """
+    Synchronous function to generate a Discord-style level card with Cairo
+    Includes achievement badges and title display
+    """
     # Default colors
     background_color = DEFAULT_BG_COLOR
     accent_color = DEFAULT_ACCENT_COLOR
@@ -553,8 +600,14 @@ def _generate_level_card_cairo_sync(avatar_bytes, username, user_id, level, xp, 
     background_opacity = 0.7
     
     # Card dimensions
-    width, height = 500, 130
+    width, height = 500, 180 # More compact height for cleaner design
     
+    # Calculate space optimization for no badges/title
+    has_completed_achievements = achievements and any(a.get("completed", False) for a in achievements)
+    has_title = selected_title is not None
+    
+    # We'll adjust height and positions later based on these flags
+
     # Create surface and context
     surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, width, height)
     ctx = cairo.Context(surface)
@@ -567,20 +620,7 @@ def _generate_level_card_cairo_sync(avatar_bytes, username, user_id, level, xp, 
     use_default_background = True
     if background_path and os.path.exists(background_path):
         try:
-            # Create cache key based on the background path and dimensions
-            bg_cache_key = f"bg:{background_path}_{width}x{height}"
-            
-            # Use cached background if available
-            background_surface = BACKGROUND_CACHE.get(bg_cache_key)
-            
-            if background_surface is None:
-                # Load the background
-                background_surface = load_image_surface(background_path, width, height)
-                
-                # Cache for future use if valid
-                if background_surface:
-                    BACKGROUND_CACHE.set(bg_cache_key, background_surface)
-                
+            background_surface = load_image_surface(background_path, width, height)
             if background_surface:
                 ctx.save()
                 ctx.set_source_surface(background_surface, 0, 0)
@@ -593,54 +633,42 @@ def _generate_level_card_cairo_sync(avatar_bytes, username, user_id, level, xp, 
                 
                 ctx.restore()
                 use_default_background = False
-                
         except Exception as e:
             logging.error(f"Error loading background image: {e}")
             use_default_background = True
     
-    # Use template background if available and needed
+    # Create dark gradient background if needed
     if use_default_background:
-        # Use pre-rendered background
-        bg_surface = TEMPLATE_CACHE.get('level_card_bg')
-        if bg_surface:
-            ctx.set_source_surface(bg_surface, 0, 0)
-            ctx.paint()
-        else:
-            # Fallback to creating background on-the-fly
-            initialize_template_cache()
-            bg_surface = TEMPLATE_CACHE.get('level_card_bg')
-            if bg_surface:
-                ctx.set_source_surface(bg_surface, 0, 0)
-                ctx.paint()
-            else:
-                # Emergency fallback - just use a solid color
-                ctx.set_source_rgb(*background_color)
-                ctx.rectangle(0, 0, width, height)
+        for y in range(height):
+            # Dark gradient from top to bottom
+            alpha = (180 - int(y * 0.5)) / 255.0
+            ctx.set_source_rgba(background_color[0], background_color[1], background_color[2], alpha)
+            ctx.move_to(0, y)
+            ctx.line_to(width, y)
+            ctx.stroke()
+    
+    # Add slight noise for texture (stars effect)
+    for x in range(0, width, 3):
+        for y in range(0, height, 3):
+            if random.random() > 0.97:  # 3% chance for more stars
+                alpha = random.randint(10, 50) / 255.0
+                size = random.randint(1, 2)
+                ctx.set_source_rgba(1, 1, 1, alpha)  # White color with random alpha
+                ctx.arc(x + size/2, y + size/2, size/2, 0, 2 * math.pi)
                 ctx.fill()
     
     # Avatar settings
-    avatar_size = 80
+    avatar_size = 90
     avatar_pos_x = 10
-    avatar_pos_y = height // 2 - avatar_size // 2  # Centered vertically
+    avatar_pos_y = height // 1.6 - avatar_size // 2  # Centered vertically
     
     # Draw avatar
     draw_default_avatar = True
     if avatar_bytes:
         try:
-            # Use cached avatar surface if this exact avatar was used recently
-            avatar_hash = hash(str(avatar_bytes))
-            avatar_cache_key = f"avatar_{avatar_hash}"
-            
-            avatar_surface = TEMPLATE_CACHE.get(avatar_cache_key)
-            
-            if avatar_surface is None:
-                # Load avatar from bytes
-                avatar_io = io.BytesIO(avatar_bytes)
-                avatar_surface = load_surface_from_bytes(avatar_io, avatar_size, avatar_size)
-                
-                # Cache the avatar surface
-                if avatar_surface:
-                    TEMPLATE_CACHE.set(avatar_cache_key, avatar_surface)
+            # Load avatar from bytes
+            avatar_io = io.BytesIO(avatar_bytes)
+            avatar_surface = load_surface_from_bytes(avatar_io, avatar_size, avatar_size)
             
             if avatar_surface:
                 # Draw with circular mask
@@ -670,20 +698,21 @@ def _generate_level_card_cairo_sync(avatar_bytes, username, user_id, level, xp, 
     
     # Draw default avatar if needed
     if draw_default_avatar:
-        # Use cached default avatar
-        default_avatar = TEMPLATE_CACHE.get('default_avatar')
-        if default_avatar:
-            ctx.save()
-            ctx.set_source_surface(default_avatar, avatar_pos_x, avatar_pos_y)
-            ctx.paint()
-            ctx.restore()
-        else:
-            # Emergency fallback - create a simple circle
-            ctx.save()
-            ctx.arc(avatar_pos_x + avatar_size/2, avatar_pos_y + avatar_size/2, avatar_size/2, 0, 2 * math.pi)
-            ctx.set_source_rgb(80/255, 80/255, 80/255)
-            ctx.fill()
-            ctx.restore()
+        ctx.save()  # Save the current state
+        ctx.translate(avatar_pos_x + avatar_size / 2, avatar_pos_y + avatar_size / 2)  # Move to center of avatar
+        
+        # Draw outer circle (gray)
+        ctx.arc(0, 0, avatar_size / 2, 0, 2 * math.pi)
+        ctx.set_source_rgb(80/255, 80/255, 80/255)  # Gray color
+        ctx.fill()
+        
+        # Draw inner circle (white)
+        border_width = 2
+        ctx.arc(0, 0, (avatar_size - border_width) / 2, 0, 2 * math.pi)
+        ctx.set_source_rgb(1, 1, 1)  # White color
+        ctx.fill()
+        
+        ctx.restore()  # Restore the state
     
     # Status indicator
     status_colors = {
@@ -692,106 +721,98 @@ def _generate_level_card_cairo_sync(avatar_bytes, username, user_id, level, xp, 
         "dnd": (240/255, 71/255, 71/255),
         "offline": (116/255, 127/255, 141/255)
     }
+    status_color = status_colors.get(status.lower(), status_colors["offline"])
+    status_size = 18
+    border_size = 2
     
-    # Use cached status indicator
-    status_cache_key = f"status_{status.lower()}"
-    status_surface = TEMPLATE_CACHE.get(status_cache_key)
+    # Use original status position if provided, otherwise calculate based on avatar
+    if status_pos_x == 80 and status_pos_y == 90:  # If using default values
+        status_pos_x = avatar_pos_x + avatar_size - status_size/2
+        status_pos_y = avatar_pos_y + avatar_size - status_size/2
     
-    if status_surface:
-        status_size = status_surface.get_width()
-        
-        # Use original status position if provided, otherwise calculate based on avatar
-        if status_pos_x == 80 and status_pos_y == 90:  # If using default values
-            status_pos_x = avatar_pos_x + avatar_size - status_size/2
-            status_pos_y = avatar_pos_y + avatar_size - status_size/2
-        
-        # Draw the cached status indicator
-        ctx.set_source_surface(status_surface, status_pos_x - status_size/2, status_pos_y - status_size/2)
-        ctx.paint()
-    else:
-        # Fallback - initialize status indicators and try again
-        initialize_status_indicators()
-        status_surface = TEMPLATE_CACHE.get(status_cache_key)
-        
-        if status_surface:
-            status_size = status_surface.get_width()
-            
-            # Calculate position
-            if status_pos_x == 80 and status_pos_y == 90:
-                status_pos_x = avatar_pos_x + avatar_size - status_size/2
-                status_pos_y = avatar_pos_y + avatar_size - status_size/2
-            
-            # Draw the status indicator
-            ctx.set_source_surface(status_surface, status_pos_x - status_size/2, status_pos_y - status_size/2)
-            ctx.paint()
-        else:
-            # Emergency fallback - draw a simple circle
-            status_size = 18
-            border_size = 2
-            status_color = status_colors.get(status.lower(), status_colors["offline"])
-            
-            # Calculate position
-            if status_pos_x == 80 and status_pos_y == 90:
-                status_pos_x = avatar_pos_x + avatar_size - status_size/2
-                status_pos_y = avatar_pos_y + avatar_size - status_size/2
-            
-            # Draw outer circle (border)
-            ctx.arc(status_pos_x, status_pos_y, status_size/2, 0, 2 * math.pi)
-            ctx.set_source_rgb(30/255, 30/255, 30/255)
-            ctx.fill()
-            
-            # Draw inner circle (status color)
-            ctx.arc(status_pos_x, status_pos_y, (status_size - border_size)/2, 0, 2 * math.pi)
-            ctx.set_source_rgb(*status_color)
-            ctx.fill()
+    # Draw outer circle (border)
+    ctx.arc(status_pos_x, status_pos_y, status_size/2, 0, 2 * math.pi)
+    ctx.set_source_rgb(30/255, 30/255, 30/255)  # Dark color for border
+    ctx.fill()
     
-    # XP bar settings
+    # Draw inner circle (status color)
+    ctx.arc(status_pos_x, status_pos_y, (status_size - border_size)/2, 0, 2 * math.pi)
+    ctx.set_source_rgb(*status_color)  # Status color
+    ctx.fill()
+    
+    # XP bar settings - dynamic position based on content
     xp_bar_width = width - (avatar_pos_x + avatar_size + 20) - 20  # 20px padding from right edge
     xp_bar_height = 15
     xp_bar_x = avatar_pos_x + avatar_size + 20
-    xp_bar_y = height // 2 + 20
+    
+    # Position XP bar based on whether badges/titles are present
+    if not has_completed_achievements and not has_title:
+        # If no badges or titles, position lower (more space at bottom)
+        xp_bar_y = avatar_pos_y + avatar_size / 2 + 20  # Lower position when no content below
+    else:
+        # If badges or titles exist, position higher to make room for content below
+        xp_bar_y = avatar_pos_y + avatar_size / 3 - 10  # Higher position for content below
     
     # Detect script based on username
     detected_script = detect_script(username)
     
-    # Is the text right-to-left?
-    is_rtl = detected_script in ["Arabic", "Hebrew"]
+    # Select appropriate font based on script
+    font_path = FONT_PATHS['default']
+    is_rtl = False
+    
+    if detected_script:
+        if detected_script == "Arabic" or detected_script == "Hebrew":
+            is_rtl = True
+            if detected_script == "Arabic":
+                font_path = FONT_PATHS['arabic']
+            else:  # Hebrew
+                font_path = FONT_PATHS['hebrew']
+        elif detected_script == "CJK":
+            font_path = FONT_PATHS['cjk']
+        elif detected_script == "Cyrillic":
+            font_path = FONT_PATHS['cyrillic']
+        elif detected_script == "Devanagari":
+            font_path = FONT_PATHS['devanagari']
+        elif detected_script == "Thai":
+            font_path = FONT_PATHS['thai']
+        elif detected_script == "Baybayin":
+            font_path = FONT_PATHS['baybayin']
     
     # Process with python-bidi for RTL text if needed
-    display_username = bidi.algorithm.get_display(username) if is_rtl else username
+    display_username = username
+    if is_rtl:
+        display_username = bidi.algorithm.get_display(username)
     
     # Font sizes for all text elements
     username_font_size = 22
     small_font_size = 16
+    title_font_size = 14
     rank_font_size = 26
     
-    # Get appropriate fonts (using cached versions)
-    username_font = get_font(detected_script, username_font_size)
-    default_font = get_font(None, small_font_size)
-    rank_font = get_font(None, rank_font_size)
+    # Create PIL fonts
+    username_pil_font = get_pil_font(font_path, username_font_size)
+    # Use default font for all English labels
+    default_pil_font = get_pil_font(FONT_PATHS['default'], small_font_size)
+    title_pil_font = get_pil_font(FONT_PATHS['default'], title_font_size)
+    rank_pil_font = get_pil_font(FONT_PATHS['default'], rank_font_size)
     
     # Draw username - positioned just above the XP bar
     # Get username position
-    username_y = xp_bar_y - 35
-    username_width, _ = optimized_draw_text(
-        ctx, 
-        display_username, 
-        xp_bar_x, 
-        username_y, 
-        script=detected_script,
-        size=username_font_size, 
-        rgb_color=text_color
-    )
+    username_y = xp_bar_y - 30  # Consistent spacing above XP bar
+    # Draw username with appropriate font
+    draw_text_with_pil(ctx, display_username, xp_bar_x, username_y, username_pil_font, text_color)
+    
+    # Get text extents for proper positioning of user_id
+    username_width, _ = measure_text_size(display_username, username_pil_font)
     
     # Draw user ID - aligned with username and always in English
-    optimized_draw_text(
+    draw_text_with_pil(
         ctx, 
         user_id, 
         xp_bar_x + username_width + 3, 
         username_y + (username_font_size - small_font_size)/2 + 3, 
-        script=None,
-        size=small_font_size, 
-        rgb_color=(180/255, 180/255, 180/255)
+        default_pil_font, 
+        (180/255, 180/255, 180/255)
     )
     
     # Set up values for rank and level
@@ -800,11 +821,11 @@ def _generate_level_card_cairo_sync(avatar_bytes, username, user_id, level, xp, 
     rank_text = f"#{rank_value}"
     level_text = str(level)
     
-    # Get text dimensions using cached measurements
-    rank_width, _ = measure_text_size(rank_text, rank_font)
-    level_width, _ = measure_text_size(level_text, rank_font)
-    rank_label_width, _ = measure_text_size("RANK", default_font)
-    level_label_width, _ = measure_text_size("LEVEL", default_font)
+    # Get text dimensions using PIL
+    rank_width, _ = measure_text_size(rank_text, rank_pil_font)
+    level_width, _ = measure_text_size(level_text, rank_pil_font)
+    rank_label_width, _ = measure_text_size("RANK", default_pil_font)
+    level_label_width, _ = measure_text_size("LEVEL", default_pil_font)
     
     # Set dynamic padding
     min_padding = 5  # Minimum padding between elements
@@ -828,66 +849,44 @@ def _generate_level_card_cairo_sync(avatar_bytes, username, user_id, level, xp, 
     rank_label_x = current_x - rank_label_width
     
     # Draw RANK label - always in English
-    optimized_draw_text(
+    draw_text_with_pil(
         ctx, 
         "RANK", 
         rank_label_x, 
-        1 + small_font_size/2, 
-        script=None,
-        size=small_font_size, 
-        rgb_color=(180/255, 180/255, 180/255)
+        10 + small_font_size/2, 
+        default_pil_font, 
+        (180/255, 180/255, 180/255)
     )
     
     # Draw rank value - always in English
-    optimized_draw_text(
+    draw_text_with_pil(
         ctx, 
         rank_text, 
         rank_value_x, 
-        -15 + rank_font_size/2, 
-        script=None,
-        size=rank_font_size, 
-        rgb_color=(1, 1, 1)
+        -5 + rank_font_size/2, 
+        rank_pil_font, 
+        (1, 1, 1)
     )
     
     # Draw LEVEL label - always in English
-    optimized_draw_text(
+    draw_text_with_pil(
         ctx, 
         "LEVEL", 
         level_label_x, 
-        1 + small_font_size/2, 
-        script=None,
-        size=small_font_size, 
-        rgb_color=(180/255, 180/255, 180/255)
+        10 + small_font_size/2, 
+        default_pil_font, 
+        (180/255, 180/255, 180/255)
     )
     
     # Draw level value - always in English
-    optimized_draw_text(
+    draw_text_with_pil(
         ctx, 
         level_text, 
         level_value_x, 
-        -15 + rank_font_size/2, 
-        script=None,
-        size=rank_font_size, 
-        rgb_color=(1, 1, 1)
+        -5 + rank_font_size/2, 
+        rank_pil_font, 
+        (1, 1, 1)
     )
-    
-    # Helper function to draw rounded rectangle
-    def rounded_rectangle(ctx, x, y, width, height, radius):
-        # Top left corner
-        ctx.move_to(x + radius, y)
-        # Top right corner
-        ctx.line_to(x + width - radius, y)
-        ctx.arc(x + width - radius, y + radius, radius, -math.pi/2, 0)
-        # Bottom right corner
-        ctx.line_to(x + width, y + height - radius)
-        ctx.arc(x + width - radius, y + height - radius, radius, 0, math.pi/2)
-        # Bottom left corner
-        ctx.line_to(x + radius, y + height)
-        ctx.arc(x + radius, y + height - radius, radius, math.pi/2, math.pi)
-        # Back to top left
-        ctx.line_to(x, y + radius)
-        ctx.arc(x + radius, y + radius, radius, math.pi, 3*math.pi/2)
-        ctx.close_path()
     
     # XP bar background
     ctx.set_source_rgba(150/255, 150/255, 150/255, 140/255)
@@ -907,131 +906,233 @@ def _generate_level_card_cairo_sync(avatar_bytes, username, user_id, level, xp, 
     
     # XP text - always in English
     xp_text = f"{xp}/{xp_needed} XP"
-    xp_text_width, _ = measure_text_size(xp_text, default_font)
+    xp_text_width, _ = measure_text_size(xp_text, default_pil_font)
     
-    optimized_draw_text(
+    draw_text_with_pil(
         ctx, 
         xp_text, 
         xp_bar_x + xp_bar_width - xp_text_width, 
-        xp_bar_y - 30, 
-        script=None,
-        size=small_font_size, 
-        rgb_color=(180/255, 180/255, 180/255)
+        xp_bar_y - 25,  # Consistent spacing above XP bar
+        default_pil_font, 
+        (180/255, 180/255, 180/255)
     )
+    
+    # Draw mini achievement badges below XP bar (left side)
+    if achievements:
+        # Get completed achievements only
+        completed_achievements = [a for a in achievements if a.get("completed", False)]
+        
+        # Only proceed if we have completed achievements
+        if completed_achievements:
+            mini_badge_size = 20
+            mini_badge_spacing = 8
+            mini_badges_x = avatar_pos_x + avatar_size + 20
+            mini_badges_y = xp_bar_y + xp_bar_height
+            
+            # Move down for badges
+            mini_badges_y = xp_bar_y + xp_bar_height + 15
+            
+            # If no title is selected but user has achievements, get a default title
+            if selected_title is None:
+                # Use the name of the first completed achievement as title by default
+                selected_title = f"«{completed_achievements[0]['name']}»"
+            
+            # Draw title if available - position it between XP bar and achievements
+            title_y = xp_bar_y + xp_bar_height + 10  # Just below XP bar
+            if selected_title:
+                # Draw a subtle background for the title
+                title_width, title_height = measure_text_size(selected_title, title_pil_font)
+                title_bg_padding = 8
+                
+                ctx.set_source_rgba(*accent_color, 0.3)  # Semi-transparent accent color
+                rounded_rectangle(
+                    ctx,
+                    mini_badges_x - title_bg_padding/2,
+                    title_y - title_bg_padding/2,
+                    title_width + title_bg_padding,
+                    title_height + title_bg_padding,
+                    5  # Small radius for rounded corners
+                )
+                ctx.fill()
+                
+                # Draw the title text
+                draw_text_with_pil(
+                    ctx,
+                    selected_title,
+                    mini_badges_x - 5,
+                    title_y - 10,  # Move up slightly to center properly
+                    title_pil_font,
+                    (1, 1, 1)  # White color
+                )
+                
+                # Adjust the badges position to be below the title
+                mini_badges_y = title_y + title_height + 10
+            
+            badge_count = min(len(completed_achievements), 10)  # Show max 10 mini badges
+            
+            # Draw mini achievement badges in a single row
+            for i in range(badge_count):
+                achievement = completed_achievements[i]
+                badge_x = mini_badges_x + (i * (mini_badge_size + mini_badge_spacing))
+                
+                # Draw badge rounded square background
+                radius = mini_badge_size / 5  # smaller radius for more square-like appearance
+                rounded_rectangle(ctx, badge_x, mini_badges_y, mini_badge_size, mini_badge_size, radius)
+                ctx.set_source_rgb(*accent_color)
+                ctx.fill()
+                
+                # Try to load and draw the actual badge image from icon_path
+                try:
+                    if "icon_path" in achievement and achievement["icon_path"]:
+                        # Construct the full path to the badge
+                        badge_path = achievement["icon_path"]
+                        # If the path is relative, join with EXTERNAL_VOLUME_PATH
+                        if badge_path and not os.path.isabs(badge_path):
+                            badge_path = os.path.join(EXTERNAL_VOLUME_PATH, badge_path)
+                            
+                        if os.path.exists(badge_path):
+                            # Load the badge image
+                            badge_surface = load_image_surface(badge_path, mini_badge_size, mini_badge_size)
+                            
+                            if badge_surface:
+                                # Draw the badge image
+                                ctx.save()
+                                
+                                # Create rounded square clipping path
+                                rounded_rectangle(ctx, badge_x, mini_badges_y, mini_badge_size, mini_badge_size, radius)
+                                ctx.clip()
+                                
+                                # Draw badge
+                                ctx.set_source_surface(badge_surface, badge_x, mini_badges_y)
+                                ctx.paint()
+                                ctx.restore()
+                            else:
+                                # Fallback to drawing a placeholder if loading fails
+                                draw_placeholder_badge(ctx, badge_x, mini_badges_y, mini_badge_size)
+                        else:
+                            # Fallback to drawing a placeholder if file doesn't exist
+                            logging.debug(f"Badge file not found: {badge_path}")
+                            draw_placeholder_badge(ctx, badge_x, mini_badges_y, mini_badge_size)
+                    else:
+                        # Fallback to drawing a placeholder if no icon_path
+                        draw_placeholder_badge(ctx, badge_x, mini_badges_y, mini_badge_size)
+                except Exception as e:
+                    logging.error(f"Error loading badge image: {e}")
+                    # Fallback to drawing a placeholder if loading fails
+                    draw_placeholder_badge(ctx, badge_x, mini_badges_y, mini_badge_size)
+        elif selected_title:  # Handle case where there's a title but no badges
+            # Draw title only
+            mini_badges_x = avatar_pos_x + avatar_size + 20
+            title_y = xp_bar_y + xp_bar_height + 10  # Just below XP bar
+            
+            # Draw a subtle background for the title
+            title_width, title_height = measure_text_size(selected_title, title_pil_font)
+            title_bg_padding = 8
+            
+            ctx.set_source_rgba(*accent_color, 0.3)  # Semi-transparent accent color
+            rounded_rectangle(
+                ctx,
+                mini_badges_x - title_bg_padding/2,
+                title_y - title_bg_padding/2,
+                title_width + title_bg_padding,
+                title_height + title_bg_padding,
+                5  # Small radius for rounded corners
+            )
+            ctx.fill()
+            
+            # Draw the title text
+            draw_text_with_pil(
+                ctx,
+                selected_title,
+                mini_badges_x - 5,
+                title_y - 10,  # Move up slightly to center properly
+                title_pil_font,
+                (1, 1, 1)  # White color
+            )
+    
+    # Add a subtle indicator for which script we detected (for debugging/testing)
+    if detected_script:
+        script_indicator = f"{detected_script}"
+        indicator_width, _ = measure_text_size(script_indicator, default_pil_font)
+        draw_text_with_pil(
+            ctx,
+            script_indicator,
+            width - indicator_width - 5,
+            height - 15,
+            default_pil_font,
+            (100/255, 100/255, 100/255)
+        )
     
     # Save to bytes
     image_bytes = io.BytesIO()
     surface.write_to_png(image_bytes)
     image_bytes.seek(0)
-    
-    # Force garbage collection to clean up Cairo objects
-    del surface
-    del ctx
-    
     return image_bytes
 
-# Async wrapper for the Cairo level card generator
 async def generate_level_card(member, level, xp, xp_needed, bot=None):
     """
-    Generate a level card for a Discord member with optimized performance and memory management
+    Asynchronously generate a level card for a Discord member
     
-    Parameters:
-    - member: discord.Member object
-    - level: User's current level
-    - xp: User's current XP
-    - xp_needed: XP needed for next level
-    - bot: Optional bot instance for accessing the image thread pool
-    
-    Returns:
-    - BytesIO: The generated level card image
+    This version includes achievements and title display.
     """
-    # Get user's background if any
-    guild_id = str(member.guild.id)
-    user_id = str(member.id)
-    
-    start_time = time.time()
-    
     try:
-        # Get background path
-        from database import get_user_background
-        relative_path = await get_user_background(guild_id, user_id)
+        # Get member information
+        username = member.display_name
+        user_id = f"#{member.discriminator}" if member.discriminator != "0" else ""
+        guild_id = str(member.guild.id)
         
-        # Convert relative path to full path if a background exists
-        background_path = None
-        if relative_path:
-            background_path = os.path.join(EXTERNAL_VOLUME_PATH, relative_path)
-            # Verify the file exists
-            if not os.path.exists(background_path):
-                logging.warning(f"Background file not found: {background_path}")
-                background_path = None
-        
-        # Get user's rank if available
-        from database import get_user_rank
-        rank = await get_user_rank(guild_id, user_id)
-        
-        # Get status
-        status = "online"
-        if hasattr(member, "status"):
+        # Determine user status
+        if isinstance(member, discord.Member):
             status = str(member.status)
-        
-        # Format user ID with # prefix
-        user_id_display = f"#{user_id[-4:]}"
-        
-        # Get avatar using the cached avatar service
-        from utils.avatar_cache import get_cached_avatar
-        avatar_bytes = await get_cached_avatar(member)
-        
-        # Use bot's thread pool if available, otherwise use default executor
-        if bot and hasattr(bot, 'image_thread_pool'):
-            # Use dedicated thread pool for image generation
-            result = await asyncio.get_event_loop().run_in_executor(
-                bot.image_thread_pool,
-                _generate_level_card_cairo_sync,
-                avatar_bytes, 
-                member.display_name,
-                user_id_display,
-                level, 
-                xp, 
-                xp_needed,
-                background_path,
-                rank,
-                status
-            )
         else:
-            # Fall back to default executor if thread pool not available
-            from utils.simple_image_handler import run_in_executor
-            result = await run_in_executor(_generate_level_card_cairo_sync)(
-                avatar_bytes, 
-                member.display_name,
-                user_id_display,
-                level, 
-                xp, 
-                xp_needed,
-                background_path,
-                rank,
-                status
-            )
+            status = "offline"
         
-        # Log time taken for monitoring purposes
-        elapsed = time.time() - start_time
-        logging.debug(f"Level card generation took {elapsed:.2f} seconds for {member.display_name}")
+        # Get user rank
+        try:
+            rank = await get_user_rank(guild_id, str(member.id))
+        except Exception as e:
+            logging.error(f"Error getting user rank: {e}")
+            rank = None
+
+        # Get user background
+        background_path = await get_user_background(guild_id, str(member.id))
         
-        # Collect memory stats
-        if elapsed > 0.5:  # Log stats for slow generations
-            logging.info(f"Memory usage after card generation: {get_text_rendering_stats()}")
+        # Get user achievements
+        from database import get_user_achievements_db, get_user_selected_title_db
+        try:
+            achievements = await get_user_achievements_db(guild_id, str(member.id))
+            # Fix: Use the correct key for achievements (completed instead of achievements)
+            achievements_list = achievements.get("completed", [])
+        except Exception as e:
+            logging.error(f"Error getting user achievements: {e}")
+            achievements_list = []
             
-            # If generation took more than 1 second, suggest garbage collection
-            if elapsed > 1.0:
-                import gc
-                gc.collect()
-                logging.info("Forced garbage collection after slow card generation")
+        # Get user selected title
+        try:
+            selected_title = await get_user_selected_title_db(guild_id, str(member.id))
+        except Exception as e:
+            logging.error(f"Error getting user selected title: {e}")
+            selected_title = None
             
-        return result
+        # Format title with quotes if set
+        if selected_title:
+            selected_title = f"«{selected_title}»"
+
+        # Get avatar from cache or fetch it
+        avatar_bytes = await get_cached_avatar(member, bot)
+         
+        # Generate the card in a thread pool - this operation is CPU-bound
+        image_bytes = await run_in_executor(_generate_level_card_cairo_sync)(
+            avatar_bytes, username, user_id, level, xp, xp_needed,
+            background_path, rank, status, 80, 90,
+            achievements_list, selected_title  # Pass achievements and title
+        )
+
+        return image_bytes
         
     except Exception as e:
-        logging.error(f"Error generating level card: {e}", exc_info=True)
-        # Create a simple error card
-        return create_error_card(f"Error generating card: {str(e)}")
+        logging.error(f"Error generating level card: {e}")
+        return create_error_card(f"Error generating level card: {e}")
 
 def create_error_card(error_message):
     """Create a simple error card when level card generation fails"""
@@ -1424,7 +1525,7 @@ async def generate_leaderboard_image(guild, rows, start_rank=1):
             member = guild.get_member(int(user_id))
             if member:
                 # Add a task to load the avatar asynchronously
-                avatar_load_tasks.append((user_id, get_cached_avatar(member)))
+                avatar_load_tasks.append((user_id, get_cached_avatar(member, None)))
                 # Initialize the member name, we'll add the avatar later
                 member_data[user_id] = (member.display_name, None)
             else:

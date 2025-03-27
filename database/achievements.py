@@ -697,3 +697,82 @@ async def delete_achievement(guild_id: str, achievement_id: int) -> bool:
         invalidate_achievement_caches(guild_id, achievement_id=achievement_id)
         
     return result
+
+async def _get_user_selected_title_internal(guild_id: str, user_id: str) -> str:
+    """Internal function to get user's selected achievement title
+    
+    Parameters:
+    - guild_id: The guild ID
+    - user_id: The user ID
+    
+    Returns:
+    - Selected title as string or None if not set
+    """
+    try:
+        async with get_connection() as conn:
+            query = """
+            SELECT selected_title 
+            FROM user_achievement_settings
+            WHERE guild_id = $1 AND user_id = $2
+            """
+            
+            result = await conn.fetchval(query, guild_id, user_id)
+            return result
+    except Exception as e:
+        logging.error(f"Error getting user selected title: {e}")
+        return None
+
+async def get_user_selected_title_db(guild_id: str, user_id: str) -> str:
+    """Get user's selected achievement title
+    
+    Parameters:
+    - guild_id: The guild ID
+    - user_id: The user ID
+    
+    Returns:
+    - Selected title as string or None if not set
+    """
+    return await safe_db_operation("get_user_selected_title_internal", guild_id, user_id)
+
+async def _set_user_selected_title_internal(guild_id: str, user_id: str, title: str) -> bool:
+    """Internal function to set user's selected achievement title
+    
+    Parameters:
+    - guild_id: The guild ID
+    - user_id: The user ID
+    - title: The title to set (pass None to clear)
+    
+    Returns:
+    - True if successful, False otherwise
+    """
+    try:
+        async with get_connection() as conn:
+            # Use UPSERT pattern
+            query = """
+            INSERT INTO user_achievement_settings 
+                (guild_id, user_id, selected_title)
+            VALUES 
+                ($1, $2, $3)
+            ON CONFLICT (guild_id, user_id) 
+            DO UPDATE SET 
+                selected_title = $3
+            """
+            
+            await conn.execute(query, guild_id, user_id, title)
+            return True
+    except Exception as e:
+        logging.error(f"Error setting user selected title: {e}")
+        return False
+
+async def set_user_selected_title_db(guild_id: str, user_id: str, title: str) -> bool:
+    """Set user's selected achievement title
+    
+    Parameters:
+    - guild_id: The guild ID
+    - user_id: The user ID
+    - title: The title to set (pass None to clear)
+    
+    Returns:
+    - True if successful, False otherwise
+    """
+    return await safe_db_operation("set_user_selected_title_internal", guild_id, user_id, title)
