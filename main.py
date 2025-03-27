@@ -49,6 +49,7 @@ try:
     from utils.background_api import BACKGROUNDS_DIR
     from utils.performance_monitoring import start_monitoring, stop_monitoring
     from utils.rate_limiter import RateLimiter, RateLimitExceeded
+    from utils.database_migration import run_all_migrations
     
     root_logger.info("All modules imported successfully")
 except Exception as e:
