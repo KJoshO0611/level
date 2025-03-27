@@ -22,6 +22,7 @@ from utils.memory_cache import MemoryAwareCache
 from utils.avatar_cache import get_cached_avatar
 from utils.simple_image_handler import run_in_executor
 from database import get_user_rank, get_user_background
+from utils.background_api import BackgroundAPI
 
 # Thread-safe LRU cache with TTL
 class TTLCache:
@@ -620,6 +621,7 @@ def _generate_level_card_cairo_sync(avatar_bytes, username, user_id, level, xp, 
     use_default_background = True
     if background_path and os.path.exists(background_path):
         try:
+            logging.info(f"Loading background from path: {background_path}")
             background_surface = load_image_surface(background_path, width, height)
             if background_surface:
                 ctx.save()
@@ -633,9 +635,12 @@ def _generate_level_card_cairo_sync(avatar_bytes, username, user_id, level, xp, 
                 
                 ctx.restore()
                 use_default_background = False
+                logging.info(f"Successfully loaded background image for user")
         except Exception as e:
             logging.error(f"Error loading background image: {e}")
             use_default_background = True
+    elif background_path:
+        logging.warning(f"Background path was provided but file doesn't exist: {background_path}")
     
     # Create dark gradient background if needed
     if use_default_background:
@@ -798,7 +803,7 @@ def _generate_level_card_cairo_sync(avatar_bytes, username, user_id, level, xp, 
     
     # Draw username - positioned just above the XP bar
     # Get username position
-    username_y = xp_bar_y - 30  # Consistent spacing above XP bar
+    username_y = xp_bar_y - 35  # Consistent spacing above XP bar
     # Draw username with appropriate font
     draw_text_with_pil(ctx, display_username, xp_bar_x, username_y, username_pil_font, text_color)
     
@@ -1096,6 +1101,23 @@ async def generate_level_card(member, level, xp, xp_needed, bot=None):
 
         # Get user background
         background_path = await get_user_background(guild_id, str(member.id))
+        
+        # Convert relative path to full path if we have a valid background path
+        if background_path:
+            try:
+                # Try to use BackgroundAPI's helper function if available
+                full_path = await BackgroundAPI.get_background_full_path(guild_id, str(member.id))
+                if full_path:
+                    background_path = full_path
+                    logging.info(f"Using background at full path (via API): {background_path}")
+                else:
+                    # Fall back to manual path joining
+                    background_path = os.path.join(EXTERNAL_VOLUME_PATH, background_path)
+                    logging.info(f"Using background at path (manual join): {background_path}")
+            except Exception as e:
+                # Fall back to manual path joining if import fails
+                background_path = os.path.join(EXTERNAL_VOLUME_PATH, background_path)
+                logging.info(f"Using background at path (fallback): {background_path}")
         
         # Get user achievements
         from database import get_user_achievements_db, get_user_selected_title_db
