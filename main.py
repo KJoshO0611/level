@@ -41,7 +41,8 @@ try:
     from modules.voice_activity import start_voice_tracking, stop_periodic_processing
     from modules.levels import handle_message_xp, handle_reaction_xp
     from modules.achievements import register_achievement_hooks
-    
+    from modules.quest_integration import initialize_quest_system
+
     from utils.async_image_processor import start_image_processor
     from utils.image_templates import initialize_image_templates
     from utils.avatar_cache import avatar_cache
@@ -96,6 +97,7 @@ class LevelingBot(commands.Bot):
             from cogs.card_customization import BackgroundCommands
             from cogs.calendar_commands import CalendarCommands
             from cogs.achievement_commands import AchievementCommands
+            from cogs.quest_commands import QuestCommands
 
             # Add cogs one by one with logging
             await self.add_cog(LevelingCommands(self))
@@ -118,6 +120,9 @@ class LevelingBot(commands.Bot):
 
             await self.add_cog(CustomHelpCommand(self))
             root_logger.info("Added CustomHelpCommand cog")
+
+            await self.add_cog(QuestCommands(self))
+            root_logger.info("Added QuestCommands cog")
 
             # Sync the command tree
             await self.tree.sync()
@@ -154,6 +159,10 @@ async def initialize_services(bot):
     root_logger.info("Initializing achievement system...")
     from modules.achievement_init import initialize_achievement_system
     await initialize_achievement_system(bot)
+
+    # Initialize quest system
+    root_logger.info("Initializing quest system...")
+    await initialize_quest_system(bot)
 
     # Start image processor
     root_logger.info("Starting image processor...")
@@ -397,6 +406,11 @@ async def cleanup_resources(bot):
         root_logger.info("Closing HTTP sessions...")
         await bot.session.close()
     
+    # Stop quest system
+    if hasattr(bot, 'quest_manager'):
+        root_logger.info("Stopping quest system...")
+        await bot.quest_manager.stop()
+
     # Stop periodic processing
     stop_periodic_processing()
     root_logger.info("Stopping periodic processing...")

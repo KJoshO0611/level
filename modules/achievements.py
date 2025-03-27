@@ -32,7 +32,12 @@ async def send_achievement_notification(guild, member, achievement_data):
             value=achievement_data['description'],
             inline=False
         )
-        if member.avatar:
+        
+        # Try to get server-specific avatar first
+        guild_member = guild.get_member(member.id)
+        if guild_member and guild_member.avatar:
+            embed.set_thumbnail(url=guild_member.avatar.url)
+        elif member.avatar:
             embed.set_thumbnail(url=member.avatar.url)
         
         # Try to get the level up channel first

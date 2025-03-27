@@ -82,6 +82,21 @@ from .utils import (
     retry_pending_operations
 )
 
+from .quests import (
+    create_quest,
+    get_quest,
+    update_quest,
+    delete_quest,
+    get_guild_active_quests,
+    mark_quests_inactive,
+    get_user_quest_progress,
+    update_user_quest_progress,
+    get_user_active_quests,
+    get_user_quest_stats,
+    check_quest_progress,
+    award_quest_rewards,
+)
+
 # Export all public functions
 __all__ = [
     # Core
@@ -117,3 +132,13 @@ __all__ = [
     # Utils
     'safe_db_operation', 'retry_pending_operations'
 ]
+
+# Add these to __all__ list:
+__all__.extend([
+    # Quests
+    'create_quest', 'get_quest', 'update_quest', 'delete_quest',
+    'get_guild_active_quests', 'mark_quests_inactive',
+    'get_user_quest_progress', 'update_user_quest_progress',
+    'get_user_active_quests', 'get_user_quest_stats',
+    'check_quest_progress', 'award_quest_rewards'
+])

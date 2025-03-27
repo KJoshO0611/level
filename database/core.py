@@ -212,6 +212,41 @@ async def _create_tables(bot):
                 )
             ''')
 
+            # Table for Quests
+            await conn.execute('''CREATE TABLE quests (
+                    id SERIAL PRIMARY KEY,
+                    guild_id TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    description TEXT NOT NULL,
+                    quest_type TEXT NOT NULL, -- 'daily', 'weekly', 'special'
+                    requirement_type TEXT NOT NULL, -- 'messages', 'voice_time', 'reactions', etc.
+                    requirement_value INTEGER NOT NULL,
+                    reward_xp INTEGER NOT NULL,
+                    reward_multiplier FLOAT DEFAULT 1.0,
+                    icon_path TEXT,
+                    active BOOLEAN DEFAULT TRUE,
+                    refresh_cycle TEXT DEFAULT 'daily', -- 'daily', 'weekly', 'monthly', 'once'
+                    difficulty TEXT DEFAULT 'normal', -- 'easy', 'normal', 'hard', 'expert'
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            
+            # Table for user quests
+            await conn.execute('''
+                CREATE TABLE user_quests (
+                    id SERIAL PRIMARY KEY,
+                    guild_id TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    quest_id INTEGER REFERENCES quests(id),
+                    progress INTEGER DEFAULT 0,
+                    completed BOOLEAN DEFAULT FALSE,
+                    accepted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    completed_at TIMESTAMP,
+                    expires_at TIMESTAMP,
+                    UNIQUE(guild_id, user_id, quest_id)
+                )
+            ''')
+
             # Create indexes for frequently queried columns
             await conn.execute('''
                 CREATE INDEX IF NOT EXISTS idx_levels_guild_user ON levels(guild_id, user_id);
@@ -221,6 +256,9 @@ async def _create_tables(bot):
                 CREATE INDEX IF NOT EXISTS idx_achievements_type ON achievements(requirement_type);
                 CREATE INDEX IF NOT EXISTS idx_user_achievements_guild_user ON user_achievements(guild_id, user_id);
                 CREATE INDEX IF NOT EXISTS idx_user_achievements_completed ON user_achievements(completed);
+                CREATE INDEX IF NOT EXISTS idx_user_quests_user ON user_quests(guild_id, user_id);
+                CREATE INDEX IF NOT EXISTS idx_user_quests_completed ON user_quests(completed);
+                CREATE INDEX IF NOT EXISTS idx_quests_active ON quests(guild_id, active);
             ''')
 
 async def health_check_loop(bot):
