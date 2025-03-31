@@ -428,11 +428,160 @@ async def get_user_quest_progress(guild_id: str, user_id: str, quest_id: int) ->
         logging.error(f"Error getting quest progress: {e}")
         return 0, 0, False, None
 
+async def check_quest_progress(guild_id: str, user_id: str, counter_type: str, counter_value: int, session_value: int = None) -> List[Dict]:
+    """
+    Check and update progress on all active quests for a user based on a counter
+    
+    Parameters:
+    - guild_id: Guild ID
+    - user_id: User ID
+    - counter_type: Type of counter being updated
+    - counter_value: New counter value
+    - session_value: For voice quests, the value from just this session (optional)
+    
+    Returns:
+    - List of newly completed quests
+    """
+    try:
+        # Validate counter_value
+        if counter_value is None:
+            logging.error(f"Invalid counter_value (None) for {counter_type}")
+            return []
+            
+        logging.debug(f"Checking quest progress for {counter_type}, counter_value={counter_value}, session_value={session_value}")
+        
+        # Get all active quests for this guild that match the counter type
+        async with get_connection() as conn:
+            quest_query = """
+            SELECT id, name, description, requirement_type, requirement_value, reward_xp, reward_multiplier, quest_type
+            FROM quests
+            WHERE guild_id = $1 AND active = TRUE AND requirement_type = $2
+            """
+            quests = await conn.fetch(quest_query, guild_id, counter_type)
+            
+            if not quests:
+                logging.debug(f"No active quests found for {counter_type} in guild {guild_id}")
+                return []
+                
+            logging.debug(f"Found {len(quests)} active quests for {counter_type}")
+                
+            # Check each quest for progress/completion
+            newly_completed = []
+            
+            for quest in quests:
+                quest_id = quest['id']
+                quest_name = quest['name']
+                quest_type = quest['quest_type']
+                
+                logging.debug(f"Processing quest {quest_name} (ID: {quest_id}, type: {quest_type})")
+                
+                # Get current progress
+                progress_query = """
+                SELECT progress, quest_specific_progress, completed
+                FROM user_quests
+                WHERE guild_id = $1 AND user_id = $2 AND quest_id = $3
+                """
+                progress_row = await conn.fetchrow(progress_query, guild_id, user_id, quest_id)
+                
+                if progress_row:
+                    progress = progress_row['progress']
+                    quest_specific_progress = progress_row['quest_specific_progress']
+                    completed = progress_row['completed']
+                    logging.debug(f"Existing progress for quest {quest_name}: {quest_specific_progress}/{quest['requirement_value']}")
+                else:
+                    progress = 0
+                    quest_specific_progress = 0
+                    completed = False
+                    logging.debug(f"No existing progress for quest {quest_name}, starting at 0")
+                
+                # Skip if already completed
+                if completed:
+                    logging.debug(f"Quest {quest_name} already completed, skipping")
+                    continue
+                    
+                # Ensure requirement_value is valid
+                if quest['requirement_value'] is None:
+                    logging.error(f"Invalid requirement_value (None) for quest {quest_id}")
+                    continue
+                
+                # Calculate the progress increment based on the counter type
+                quest_progress_increment = 1  # Default increment for most actions
+                
+                # Special handling for voice quests
+                if counter_type == "voice_time_seconds":
+                    # Determine if we're using the session value or calculating from total
+                    if session_value is not None:
+                        # Use the session value directly (seconds from this session only)
+                        quest_progress_increment = session_value
+                        logging.debug(f"Using session_value directly: {quest_progress_increment} seconds")
+                    else:
+                        # Use the difference between the new counter value and the previous progress
+                        if progress > 0:
+                            latest_contribution = counter_value - progress
+                            if latest_contribution > 0:
+                                quest_progress_increment = latest_contribution
+                                logging.debug(f"Calculated increment from counter difference: {quest_progress_increment} seconds")
+                            else:
+                                logging.warning(f"Negative or zero contribution calculated: {latest_contribution}")
+                                quest_progress_increment = 0
+                        else:
+                            # First time tracking this quest, use the full counter value
+                            quest_progress_increment = counter_value
+                            logging.debug(f"First tracking for quest, using full counter: {quest_progress_increment} seconds")
+                
+                # Update the quest-specific progress based on the calculated increment
+                new_progress = quest_specific_progress + quest_progress_increment
+                logging.debug(f"Updating quest progress from {quest_specific_progress} to {new_progress} (requirement: {quest['requirement_value']})")
+                
+                # Check if this update will complete the quest
+                will_complete = new_progress >= quest['requirement_value']
+                if will_complete:
+                    logging.info(f"Quest '{quest_name}' will be completed with this update!")
+                
+                # Update the progress
+                success = await _update_user_quest_progress_internal(
+                    guild_id, user_id, quest_id, counter_value, quest_progress_increment, will_complete
+                )
+                
+                # Log the result of the update
+                if not success:
+                    logging.error(f"Failed to update progress for quest {quest_id}")
+                
+                # If newly completed, add to list
+                if will_complete and success:
+                    newly_completed.append({
+                        "id": quest_id,
+                        "name": quest_name,
+                        "description": quest['description'],
+                        "reward_xp": quest['reward_xp'],
+                        "reward_multiplier": quest['reward_multiplier']
+                    })
+            
+            # Invalidate caches
+            cache_key = (guild_id, user_id)
+            if cache_key in user_quest_cache:
+                del user_quest_cache[cache_key]
+                logging.debug(f"Invalidated user_quest_cache for {user_id}")
+            if cache_key in user_quest_stats_cache:
+                del user_quest_stats_cache[cache_key]
+                logging.debug(f"Invalidated user_quest_stats_cache for {user_id}")
+            
+            if newly_completed:
+                logging.info(f"User {user_id} completed {len(newly_completed)} quests for {counter_type}")
+            return newly_completed
+                
+    except Exception as e:
+        logging.error(f"Error checking quest progress: {e}", exc_info=True)
+        return []
+
 async def _update_user_quest_progress_internal(guild_id, user_id, quest_id, 
                                             achievement_progress, quest_progress_increment=1,
                                             completed=False):
     """Internal function to update user quest progress"""
     try:
+        logging.debug(f"Updating quest progress for user {user_id}, quest {quest_id}")
+        logging.debug(f"Parameters: achievement_progress={achievement_progress}, increment={quest_progress_increment}, completed={completed}")
+        
         async with get_connection() as conn:
             # Get the quest to determine expiration and type
             quest_query = """
@@ -443,7 +592,10 @@ async def _update_user_quest_progress_internal(guild_id, user_id, quest_id,
             quest = await conn.fetchrow(quest_query, quest_id, guild_id)
             
             if not quest:
+                logging.error(f"Quest {quest_id} not found for guild {guild_id}")
                 return False
+            
+            logging.debug(f"Quest details - type={quest['quest_type']}, requirement={quest['requirement_type']}:{quest['requirement_value']}")
             
             # First check if user already has progress on this quest
             check_query = """
@@ -464,20 +616,29 @@ async def _update_user_quest_progress_internal(guild_id, user_id, quest_id,
             
             # Calculate quest-specific progress
             if existing:
+                logging.debug(f"Existing record found - progress={existing['quest_specific_progress']}, completed={existing['completed']}")
+                
                 # Only increment if not already completed
                 if not existing['completed']:
                     new_progress = existing['quest_specific_progress'] + quest_progress_increment
+                    logging.debug(f"Updating progress from {existing['quest_specific_progress']} to {new_progress}")
+                    
                     # Check if the quest should be completed
                     if new_progress >= quest['requirement_value']:
                         completed = True
+                        logging.info(f"Quest will be marked as completed (progress={new_progress}/{quest['requirement_value']})")
                 else:
                     # Already completed, don't change progress
                     new_progress = existing['quest_specific_progress']
+                    logging.debug(f"Quest already completed, keeping progress at {new_progress}")
             else:
                 # New record, start with increment
                 new_progress = quest_progress_increment
+                logging.debug(f"New record, starting with progress={new_progress}")
+                
                 if new_progress >= quest['requirement_value']:
                     completed = True
+                    logging.info(f"Quest will be marked as completed immediately (progress={new_progress}/{quest['requirement_value']})")
             
             # Set completed_at if completing the quest
             completed_at = 'CURRENT_TIMESTAMP' if completed and not (existing and existing['completed']) else 'NULL'
@@ -504,10 +665,13 @@ async def _update_user_quest_progress_internal(guild_id, user_id, quest_id,
             
             result = await conn.fetchval(query, guild_id, user_id, quest_id, 
                                       achievement_progress, new_progress, completed, expires_at)
-            return result is not None
+            
+            success = result is not None
+            logging.debug(f"Database update {'successful' if success else 'failed'}")
+            return success
                 
     except Exception as e:
-        logging.error(f"Error updating quest progress: {e}")
+        logging.error(f"Error updating quest progress: {e}", exc_info=True)
         return False
 
 async def update_user_quest_progress(guild_id: str, user_id: str, quest_id: int, 
@@ -667,102 +831,6 @@ async def get_user_quest_stats(guild_id: str, user_id: str) -> Dict:
         _set_in_cache(user_quest_stats_cache, cache_key, stats)
     
     return stats
-
-async def check_quest_progress(guild_id: str, user_id: str, counter_type: str, counter_value: int) -> List[Dict]:
-    """
-    Check and update progress on all active quests for a user based on a counter
-    
-    Parameters:
-    - guild_id: Guild ID
-    - user_id: User ID
-    - counter_type: Type of counter being updated
-    - counter_value: New counter value
-    
-    Returns:
-    - List of newly completed quests
-    """
-    try:
-        # Validate counter_value
-        if counter_value is None:
-            logging.error(f"Invalid counter_value (None) for {counter_type}")
-            return []
-            
-        # Get all active quests for this guild that match the counter type
-        async with get_connection() as conn:
-            quest_query = """
-            SELECT id, name, description, requirement_type, requirement_value, reward_xp, reward_multiplier
-            FROM quests
-            WHERE guild_id = $1 AND active = TRUE AND requirement_type = $2
-            """
-            quests = await conn.fetch(quest_query, guild_id, counter_type)
-            
-            if not quests:
-                return []
-                
-            # Check each quest for progress/completion
-            newly_completed = []
-            
-            for quest in quests:
-                # Get current progress
-                progress_query = """
-                SELECT progress, quest_specific_progress, completed
-                FROM user_quests
-                WHERE guild_id = $1 AND user_id = $2 AND quest_id = $3
-                """
-                progress_row = await conn.fetchrow(progress_query, guild_id, user_id, quest['id'])
-                
-                if progress_row:
-                    progress = progress_row['progress']
-                    quest_specific_progress = progress_row['quest_specific_progress']
-                    completed = progress_row['completed']
-                else:
-                    progress = 0
-                    quest_specific_progress = 0
-                    completed = False
-                
-                # Skip if already completed
-                if completed:
-                    continue
-                    
-                # Ensure requirement_value is valid
-                if quest['requirement_value'] is None:
-                    logging.error(f"Invalid requirement_value (None) for quest {quest['id']}")
-                    continue
-                
-                # Update the quest-specific progress by 1 for this action
-                quest_progress_increment = 1
-                new_progress = quest_specific_progress + quest_progress_increment
-                
-                # Check if this update will complete the quest
-                will_complete = new_progress >= quest['requirement_value']
-                
-                # Update the progress
-                success = await _update_user_quest_progress_internal(
-                    guild_id, user_id, quest['id'], counter_value, quest_progress_increment, will_complete
-                )
-                
-                # If newly completed, add to list
-                if will_complete and success:
-                    newly_completed.append({
-                        "id": quest['id'],
-                        "name": quest['name'],
-                        "description": quest['description'],
-                        "reward_xp": quest['reward_xp'],
-                        "reward_multiplier": quest['reward_multiplier']
-                    })
-            
-            # Invalidate caches
-            cache_key = (guild_id, user_id)
-            if cache_key in user_quest_cache:
-                del user_quest_cache[cache_key]
-            if cache_key in user_quest_stats_cache:
-                del user_quest_stats_cache[cache_key]
-                
-            return newly_completed
-                
-    except Exception as e:
-        logging.error(f"Error checking quest progress: {e}")
-        return []
 
 async def award_quest_rewards(guild_id: str, user_id: str, quest_id: int, member) -> bool:
     """

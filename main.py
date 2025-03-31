@@ -41,7 +41,7 @@ try:
     from modules.voice_activity import start_voice_tracking, stop_periodic_processing
     from modules.levels import handle_message_xp, handle_reaction_xp
     from modules.achievements import register_achievement_hooks
-    from modules.quest_integration import initialize_quest_system
+    from modules.quest_integration import initialize_quest_system, voice_handler_with_quests
 
     from utils.async_image_processor import start_image_processor
     from utils.image_templates import initialize_image_templates
@@ -203,7 +203,8 @@ async def initialize_services(bot):
 def setup_event_handlers(bot):
     """Register all event handlers"""
     root_logger.info("Setting up event handlers...")
-    from modules.voice_activity import handle_voice_state_update
+    # Replace this import with one that will get the quest-aware handler
+    from modules.quest_integration import voice_handler_with_quests
     
     @bot.event
     async def on_ready():
@@ -270,7 +271,8 @@ def setup_event_handlers(bot):
         channel_after = after.channel.name if after.channel else "None"
         root_logger.info(f"Voice state update: {member.name} moved from {channel_before} to {channel_after}")
         
-        await handle_voice_state_update(bot, member, before, after)
+        # Use the quest-aware handler which will also call the original one
+        await voice_handler_with_quests(bot, member, before, after)
 
     @bot.event
     async def on_reaction_add(reaction, user):
