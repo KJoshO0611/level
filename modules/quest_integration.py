@@ -291,8 +291,14 @@ async def handle_voice_quests(guild_id, user_id, seconds, member):
                     try:
                         await award_quest_rewards(guild_id, user_id, quest['id'], member)
                         logging.info(f"Awarded rewards for quest '{quest['name']}' to {member.name}")
+                        
+                        # Get the voice channel the member is in
+                        voice_channel = member.voice.channel if member.voice else None
+                        if voice_channel:
+                            await send_quest_completion_notification(voice_channel, member, quest)
+                            logging.info(f"Sent quest completion notification for '{quest['name']}' to {member.name}")
                     except Exception as e:
-                        logging.error(f"Error awarding quest rewards: {e}")
+                        logging.error(f"Error awarding quest rewards or sending notification: {e}")
             else:
                 logging.debug(f"No quests completed for {member.name} from voice activity")
         except Exception as e:
