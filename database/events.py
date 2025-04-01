@@ -253,3 +253,44 @@ async def get_event_xp_multiplier(guild_id: str) -> float:
     # Get the highest multiplier from active events
     max_multiplier = max(event["multiplier"] for event in active_events)
     return max_multiplier
+
+async def invalidate_boost_caches(event_id: int):
+    """Invalidate all caches related to a boost event"""
+    event = await get_xp_boost_event(event_id)
+    if event:
+        guild_id = event["guild_id"]
+        if guild_id in active_events_cache:
+            del active_events_cache[guild_id]
+        if guild_id in upcoming_events_cache:
+            del upcoming_events_cache[guild_id]
+        if event_id in event_details_cache:
+            del event_details_cache[event_id]
+
+async def update_xp_boost_start_time(event_id: int, new_start_time: float) -> bool:
+    """Update the start time of an XP boost event.
+    
+    Args:
+        event_id: The ID of the XP boost event
+        new_start_time: The new start time as a Unix timestamp
+        
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    try:
+        async with get_connection() as conn:
+            query = """
+            UPDATE xp_boost_events 
+            SET start_time = $1
+            WHERE id = $2
+            RETURNING id
+            """
+            result = await conn.fetchval(query, new_start_time, event_id)
+            
+            if result:
+                # Invalidate relevant caches
+                await invalidate_boost_caches(event_id)
+                return True
+            return False
+    except Exception as e:
+        logging.error(f"Error updating XP boost start time: {e}")
+        return False

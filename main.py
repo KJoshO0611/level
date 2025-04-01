@@ -63,7 +63,7 @@ try:
         record_event_attendance,
         get_event_attendees
     )
-    from database.events import create_xp_boost_event, delete_xp_boost_event # Changed from database.xp_boost_events
+    from database.events import create_xp_boost_event, delete_xp_boost_event, update_xp_boost_start_time # Changed from database.xp_boost_events
     
     # Module imports for rewards
     from database.achievements import grant_achievement_db, check_event_attendance_achievements # Added the new check function
@@ -501,10 +501,15 @@ def setup_event_handlers(bot):
 
                 # --- Event Started ---                
                 if after.status == discord.EventStatus.active:
-                    # Boost should have been created in on_scheduled_event_create
-                    # We don't need to do anything here regarding boost creation.
+                    # If event has an associated boost, update its start time to now
+                    if logged_event and logged_event.get('associated_boost_id'):
+                        current_time = time.time()
+                        success = await update_xp_boost_start_time(logged_event['associated_boost_id'], current_time)
+                        if success:
+                            root_logger.info(f"Updated XP boost {logged_event['associated_boost_id']} start time to now for early-started event {event_id}")
+                        else:
+                            root_logger.error(f"Failed to update XP boost start time for event {event_id}")
                     root_logger.info(f"Scheduled event {event_id} is now ACTIVE.")
-                    pass # Placeholder if any other 'active' logic is needed later
 
                 # --- Event Completed ---                
                 elif after.status == discord.EventStatus.completed:
@@ -513,19 +518,25 @@ def setup_event_handlers(bot):
                         await delete_xp_boost_event(logged_event['associated_boost_id'])
                         root_logger.info(f"Ended XP boost {logged_event['associated_boost_id']} associated with completed event {event_id}")
                     
-                    # Award attendance rewards if enabled
-                    if settings.get('enable_attendance_rewards', False):
-                        attendees = await get_event_attendees(event_id)
-                        bonus_xp = settings.get('attendance_bonus_xp', 0)
-                        achievement_id_str = settings.get('attendance_achievement_id')
+                    # Get attendees first
+                    attendees = await get_event_attendees(event_id)
+                    if attendees:
+                        root_logger.info(f"Processing attendance for event {event_id} for {len(attendees)} users.")
+                        
+                        # Process each attendee
+                        for attendee in attendees:
+                            user_id = attendee['user_id']
+                            member = after.guild.get_member(int(user_id))
+                            if member and not member.bot:
+                                try:
+                                    # Check for GENERAL Event Attendance Achievements (counts) - Always do this
+                                    await check_event_attendance_achievements(guild_id, user_id, bot)
+                                    
+                                    # Only process rewards if enabled
+                                    if settings.get('enable_attendance_rewards', False):
+                                        bonus_xp = settings.get('attendance_bonus_xp', 0)
+                                        achievement_id_str = settings.get('attendance_achievement_id')
 
-                        if (bonus_xp > 0 or achievement_id_str) and attendees:
-                            root_logger.info(f"Processing attendance rewards for event {event_id} for {len(attendees)} users.")
-                            for attendee in attendees:
-                                user_id = attendee['user_id']
-                                member = after.guild.get_member(int(user_id))
-                                if member and not member.bot:
-                                    try:
                                         # Award Bonus XP
                                         if bonus_xp > 0:
                                             await award_xp_without_event_multiplier(guild_id, user_id, bonus_xp, "event_attendance", bot)
@@ -539,19 +550,15 @@ def setup_event_handlers(bot):
                                                 if granted:
                                                     root_logger.info(f"Awarded achievement ID {achievement_id} to {member.name} ({user_id}) for attending event {event_id}")
                                                 else:
-                                                     root_logger.debug(f"Achievement ID {achievement_id} not newly granted to {user_id} (likely already possessed)." ) 
+                                                    root_logger.debug(f"Achievement ID {achievement_id} not newly granted to {user_id} (likely already possessed)." ) 
                                             except ValueError:
                                                 root_logger.error(f"Invalid achievement ID format ({achievement_id_str}) configured for guild {guild_id}")
                                             except Exception as ach_error:
-                                                 root_logger.error(f"Error granting achievement {achievement_id_str} to {user_id}: {ach_error}")
-
-                                        # Check for GENERAL Event Attendance Achievements (counts)
-                                        await check_event_attendance_achievements(guild_id, user_id)
-                                                 
-                                    except Exception as reward_error:
-                                        root_logger.error(f"Error processing attendance rewards for {user_id} for event {event_id}: {reward_error}")
-                        else:
-                             root_logger.info(f"Skipping attendance rewards for event {event_id}: Rewards disabled, zero XP/no achievement set, or no attendees.")
+                                                root_logger.error(f"Error granting achievement {achievement_id_str} to {user_id}: {ach_error}")
+                                except Exception as reward_error:
+                                    root_logger.error(f"Error processing attendance for {user_id} for event {event_id}: {reward_error}")
+                    else:
+                        root_logger.info(f"No attendees found for completed event {event_id}")
                 
                 # --- Event Cancelled --- 
                 elif after.status == discord.EventStatus.cancelled:

@@ -117,6 +117,7 @@ async def _create_tables(bot):
                     total_reactions INTEGER DEFAULT 0,
                     voice_time_seconds INTEGER DEFAULT 0,
                     commands_used INTEGER DEFAULT 0,
+                    event_attendance_count INTEGER DEFAULT 0,
                     PRIMARY KEY (guild_id, user_id)
                 )
             ''')
@@ -246,6 +247,46 @@ async def _create_tables(bot):
                 )
             ''')
 
+            # Tables for Discord Scheduled Event integration
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS guild_event_settings (
+                    guild_id TEXT PRIMARY KEY,
+                    event_channel_id TEXT,
+                    event_role_id TEXT,
+                    xp_reward INTEGER DEFAULT 100,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS discord_scheduled_events (
+                    event_id TEXT PRIMARY KEY,
+                    guild_id TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    description TEXT,
+                    start_time DOUBLE PRECISION NOT NULL,
+                    end_time DOUBLE PRECISION,
+                    status TEXT NOT NULL,
+                    entity_type TEXT NOT NULL,
+                    entity_id TEXT,
+                    creator_id TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS event_attendance (
+                    id SERIAL PRIMARY KEY,
+                    event_id TEXT REFERENCES discord_scheduled_events(event_id),
+                    user_id TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(event_id, user_id)
+                )
+            ''')
+
             # Create indexes for frequently queried columns
             await conn.execute('''
                 CREATE INDEX IF NOT EXISTS idx_levels_guild_user ON levels(guild_id, user_id);
@@ -258,6 +299,10 @@ async def _create_tables(bot):
                 CREATE INDEX IF NOT EXISTS idx_user_quests_user ON user_quests(guild_id, user_id);
                 CREATE INDEX IF NOT EXISTS idx_user_quests_completed ON user_quests(completed);
                 CREATE INDEX IF NOT EXISTS idx_quests_active ON quests(guild_id, active);
+                CREATE INDEX IF NOT EXISTS idx_discord_events_guild ON discord_scheduled_events(guild_id);
+                CREATE INDEX IF NOT EXISTS idx_discord_events_status ON discord_scheduled_events(status);
+                CREATE INDEX IF NOT EXISTS idx_event_attendance_event ON event_attendance(event_id);
+                CREATE INDEX IF NOT EXISTS idx_event_attendance_user ON event_attendance(user_id);
             ''')
 
 async def health_check_loop(bot):

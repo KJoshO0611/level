@@ -278,7 +278,8 @@ async def run_all_migrations(bot):
             create_user_achievement_settings_table(bot), # Migration 3
             # migration_version_4 - 7 seem missing based on numbering
             migration_version_8(), # Migration 8 (internal)
-            apply_migration_from_file("database/migrations/003_add_event_integration_tables.py") # Migration '003' (file-based)
+            apply_migration_from_file("database/migrations/003_add_event_integration_tables.py"), # Migration '003' (file-based)
+            apply_migration_from_file("database/migrations/004_add_event_attendance_counter.py") # Migration '004' (file-based)
         ]
         
         results = await asyncio.gather(*migration_tasks, return_exceptions=True)
@@ -290,6 +291,7 @@ async def run_all_migrations(bot):
             migration_name = f"Internal Migration {i+1}" 
             if i == 3: migration_name = "Migration 8 (Internal)"
             if i == 4: migration_name = "Migration 003 (File)"
+            if i == 5: migration_name = "Migration 004 (File)" # Updated index for logging
             
             if isinstance(result, Exception):
                 logging.error(f"{migration_name} failed with error: {result}")

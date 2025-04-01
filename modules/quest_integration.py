@@ -83,7 +83,7 @@ async def handle_message_quests(message, bot):
         await award_quest_rewards(guild_id, user_id, quest['id'], message.author)
         await send_quest_completion_notification(message.channel, message.author, quest)
 
-async def handle_reaction_quests(reaction, user):
+async def handle_reaction_quests(reaction, user, bot):
     """Handle quest progress for reactions"""
     if user.bot or not reaction.message.guild:
         return
@@ -93,7 +93,7 @@ async def handle_reaction_quests(reaction, user):
     
     # Check rate limiting for quest progress
     quest_key = f"quest:reaction:{user_id}"
-    is_limited, wait_time = await reaction.message.guild.bot.rate_limiters["quest"].check_rate_limit(quest_key)
+    is_limited, wait_time = await bot.rate_limiters["quest"].check_rate_limit(quest_key)
     
     # Additional cooldown specific to reaction quests
     reaction_quest_key = f"quest_reaction:{user_id}"
@@ -104,7 +104,6 @@ async def handle_reaction_quests(reaction, user):
     
     if cooldown > 0:
         # Create a custom limiter for this specific quest type with the configured cooldown
-        bot = reaction.message.guild.bot
         if not hasattr(bot, "_reaction_quest_limiter"):
             bot._reaction_quest_limiter = {}
         
@@ -648,7 +647,7 @@ def register_quest_hooks(bot):
             await original_on_reaction_add(reaction, user)
         
         # Process reaction for quests
-        await handle_reaction_quests(reaction, user)
+        await handle_reaction_quests(reaction, user, bot)
     
     async def on_command_completion(ctx):
         # Call the original handler first

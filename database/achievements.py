@@ -844,38 +844,37 @@ async def grant_achievement_db(guild_id: str, user_id: str, achievement_id: int)
                 raise
                 # return False # This line is unreachable due to raise
 
-async def check_event_attendance_achievements(guild_id: str, user_id: str):
-    """Check and grant achievements based on event attendance count."""
+async def check_event_attendance_achievements(guild_id: str, user_id: str, bot=None):
+    """
+    Increment event attendance counter and check for related achievements.
+    
+    Parameters:
+    - guild_id: The guild ID
+    - user_id: The user ID
+    - bot: Optional bot instance for sending notifications
+    """
     try:
-        # 1. Get the user's total event attendance count for this guild
-        attendance_count = await get_user_event_attendance_count(guild_id, user_id)
-        if attendance_count <= 0:
-            return # No attendance, no achievements to grant
-
-        async with get_connection() as conn:
-            # 2. Find relevant event attendance achievements for this guild
-            query = """
-            SELECT id FROM achievements 
-            WHERE guild_id = $1 AND requirement_type = 'event_attendance' AND requirement_value <= $2
-            ORDER BY requirement_value DESC
-            """
-            potential_achievements = await conn.fetch(query, guild_id, attendance_count)
-
-            if not potential_achievements:
-                return # No matching achievements found
-
-            # 3. Check each potential achievement and grant if not already completed
-            newly_granted_count = 0
-            for record in potential_achievements:
-                achievement_id = record['id']
-                # Use grant_achievement_db which handles checks and updates
-                granted = await grant_achievement_db(guild_id, user_id, achievement_id)
-                if granted:
-                    newly_granted_count += 1
-            
-            if newly_granted_count > 0:
-                 logging.info(f"Granted {newly_granted_count} event attendance achievements to user {user_id} in guild {guild_id}.")
-                 # Caches are invalidated within grant_achievement_db
+        # Call the central counter update function which handles achievement checks
+        # Pass increment=1 because this function is called once per event completion per user.
+        new_count, newly_completed = await update_activity_counter_db(
+            guild_id, user_id, 'event_attendance_count', increment=1
+        )
+        
+        if new_count == -1:
+             logging.warning(f"Failed to update event_attendance_count for user {user_id} in guild {guild_id}.")
+        elif newly_completed:
+            logging.info(f"User {user_id} in guild {guild_id} completed {len(newly_completed)} event attendance achievements. New count: {new_count}")
+            # Send notifications for newly completed achievements if bot instance is provided
+            if bot:
+                from modules.achievements import send_achievement_notification
+                guild = bot.get_guild(int(guild_id))
+                if guild:
+                    member = guild.get_member(int(user_id))
+                    if member:
+                        for achievement in newly_completed:
+                            await send_achievement_notification(guild, member, achievement)
+        else:
+            logging.debug(f"Incremented event_attendance_count for user {user_id} in guild {guild_id}. New count: {new_count}")
 
     except Exception as e:
         logging.error(f"Error checking event attendance achievements for user {user_id} in guild {guild_id}: {e}", exc_info=True)

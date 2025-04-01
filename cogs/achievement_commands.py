@@ -30,7 +30,7 @@ REQUIREMENT_TYPES = [
     "total_reactions",
     "voice_time_seconds",
     "commands_used",
-    "event_attendance"
+    "event_attendance_count"
 ]
 
 class AchievementCommands(commands.Cog):
@@ -49,7 +49,7 @@ class AchievementCommands(commands.Cog):
             )
             embed.add_field(
                 name="!!achievement create <name> <requirement_type> <value> <description>",
-                value="Create a new achievement (Types: total_messages, total_reactions, voice_time_seconds, commands_used, event_attendance)",
+                value="Create a new achievement (Types: total_messages, total_reactions, voice_time_seconds, commands_used, event_attendance_count)",
                 inline=False
             )
             embed.add_field(
@@ -80,14 +80,14 @@ class AchievementCommands(commands.Cog):
         """
         Create a new achievement for this guild
         
-        Example: !!achievement create "Event Goer" event_attendance 10 Attended 10 server events
+        Example: !!achievement create "Event Goer" event_attendance_count 10 Attended 10 server events
         
         Valid requirement types:
         - total_messages: Total messages sent
         - total_reactions: Total reactions added
         - voice_time_seconds: Time spent in voice channels (in seconds)
         - commands_used: Number of commands used
-        - event_attendance: Number of scheduled events attended
+        - event_attendance_count: Number of scheduled events attended (increments on completion)
         """
         # Validate requirement type
         if requirement_type not in REQUIREMENT_TYPES:
@@ -436,14 +436,14 @@ class AchievementCommands(commands.Cog):
         app_commands.Choice(name="Reactions Added", value="total_reactions"),
         app_commands.Choice(name="Voice Time (seconds)", value="voice_time_seconds"),
         app_commands.Choice(name="Commands Used", value="commands_used"),
-        app_commands.Choice(name="Events Attended", value="event_attendance")
+        app_commands.Choice(name="Events Attended Count", value="event_attendance_count")
     ])
     @app_commands.checks.has_permissions(administrator=True)
     async def slash_create_achievement(
         self, 
         interaction: discord.Interaction,
         name: str,
-        requirement_type: str,
+        requirement_type: Literal["total_messages", "total_reactions", "voice_time_seconds", "commands_used", "event_attendance_count"],
         requirement_value: int,
         description: str
     ):
