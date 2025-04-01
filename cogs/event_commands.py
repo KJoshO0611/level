@@ -8,6 +8,7 @@ import logging
 from typing import Literal, Optional
 
 from database.event_db import get_guild_event_settings, update_guild_event_settings, DEFAULT_EVENT_SETTINGS, get_guild_event_stats, get_user_event_attendance_count
+from database.achievements import get_achievement_by_id
 
 class EventCommands(commands.Cog):
     """Commands related to Discord Scheduled Event integration"""
@@ -34,8 +35,24 @@ class EventCommands(commands.Cog):
         embed.add_field(name="External Event Boost", value=f"{settings.get('default_boost_external', DEFAULT_EVENT_SETTINGS['default_boost_external']):.2f}x", inline=True)
         embed.add_field(name="Attendance Rewards Enabled", value=settings.get('enable_attendance_rewards', DEFAULT_EVENT_SETTINGS['enable_attendance_rewards']), inline=False)
         embed.add_field(name="Attendance Bonus XP", value=settings.get('attendance_bonus_xp', DEFAULT_EVENT_SETTINGS['attendance_bonus_xp']), inline=True)
-        # Add achievement display later if needed
-        # embed.add_field(name="Attendance Achievement ID", value=settings.get('attendance_achievement_id', 'Not Set'), inline=True)
+        
+        # Display linked achievement ID
+        ach_id = settings.get('attendance_achievement_id')
+        ach_display = "Not Set"
+        if ach_id:
+            try:
+                # Fetch achievement name for better display
+                ach_data = await get_achievement_by_id(guild_id, int(ach_id)) 
+                if ach_data:
+                    ach_display = f"{ach_data['name']} (ID: {ach_id})"
+                else:
+                    ach_display = f"Invalid ID: {ach_id}" # Indicate if ID is set but invalid
+            except ValueError:
+                 ach_display = f"Invalid Format ID: {ach_id}" 
+            except Exception as e:
+                logging.error(f"Error fetching achievement {ach_id} for display: {e}")
+                ach_display = f"Error (ID: {ach_id})"
+        embed.add_field(name="Attendance Achievement", value=ach_display, inline=True)
 
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
@@ -83,6 +100,36 @@ class EventCommands(commands.Cog):
 
         await update_guild_event_settings(guild_id, {"attendance_bonus_xp": xp})
         await interaction.response.send_message(f"Event attendance bonus XP set to **{xp}**.", ephemeral=True)
+
+    @config_group.command(name="set_attendance_achievement", description="Set or clear the achievement awarded for event attendance.")
+    @app_commands.describe(achievement_id="The ID of the achievement to award. Set to 0 to clear.")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def set_attendance_achievement(self, interaction: discord.Interaction, achievement_id: int):
+        """Sets the achievement awarded for event attendance. Use ID 0 to clear."""
+        guild_id = str(interaction.guild_id)
+        
+        if achievement_id == 0:
+            # Clear the setting
+            await update_guild_event_settings(guild_id, {"attendance_achievement_id": None})
+            await interaction.response.send_message("Attendance achievement reward has been cleared.", ephemeral=True)
+            return
+            
+        # Validate the achievement ID
+        try:
+            achievement_data = await get_achievement_by_id(guild_id, achievement_id)
+            if not achievement_data:
+                await interaction.response.send_message(f"Error: No achievement found with ID `{achievement_id}` in this server.", ephemeral=True)
+                return
+                
+            # Achievement is valid, update the setting
+            await update_guild_event_settings(guild_id, {"attendance_achievement_id": str(achievement_id)}) # Store as string
+            await interaction.response.send_message(f"Attendance achievement reward set to **{achievement_data['name']}** (ID: {achievement_id}).", ephemeral=True)
+            
+        except ValueError:
+            await interaction.response.send_message("Invalid input: Achievement ID must be a number.", ephemeral=True)
+        except Exception as e:
+            logging.error(f"Error setting attendance achievement for guild {guild_id}: {e}")
+            await interaction.response.send_message("An unexpected error occurred while setting the achievement.", ephemeral=True)
 
     # Analytics/Stats Commands (can be expanded)
     event_stats_group = app_commands.Group(name="event_stats", description="View statistics related to Discord events.")

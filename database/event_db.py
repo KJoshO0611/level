@@ -3,7 +3,7 @@ Database operations for Discord Scheduled Event integration.
 """
 import logging
 from datetime import datetime
-from .core import get_connection, setup_database_pool, close_database_pool
+from .core import get_connection
 
 # Default settings
 DEFAULT_EVENT_SETTINGS = {

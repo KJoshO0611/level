@@ -12,6 +12,7 @@ from .cache import (
     invalidate_achievement_caches
 )
 from .utils import safe_db_operation
+from .event_db import get_user_event_attendance_count
 
 async def _update_activity_counter_internal(guild_id: str, user_id: str, counter_type: str, increment: int = 1):
     """Internal function for updating activity counter with safe_db_operation"""
@@ -765,14 +766,116 @@ async def _set_user_selected_title_internal(guild_id: str, user_id: str, title: 
         return False
 
 async def set_user_selected_title_db(guild_id: str, user_id: str, title: str) -> bool:
-    """Set user's selected achievement title
-    
-    Parameters:
-    - guild_id: The guild ID
-    - user_id: The user ID
-    - title: The title to set (pass None to clear)
-    
+    """Sets the user's selected achievement title for display"""
+    return await safe_db_operation(
+        _set_user_selected_title_internal, 
+        guild_id, user_id, title
+    )
+
+async def grant_achievement_db(guild_id: str, user_id: str, achievement_id: int) -> bool:
+    """Grant a specific achievement to a user, checking if they already have it.
+
     Returns:
-    - True if successful, False otherwise
+        True if the achievement was newly granted (status changed to completed),
+        False otherwise (already completed or error).
     """
-    return await safe_db_operation("set_user_selected_title_internal", guild_id, user_id, title)
+    async with get_connection() as conn:
+        async with conn.transaction():
+            try:
+                # Check if the achievement exists for the guild
+                ach_exists_query = "SELECT 1 FROM achievements WHERE id = $1 AND guild_id = $2"
+                achievement_exists = await conn.fetchval(ach_exists_query, achievement_id, guild_id)
+                if not achievement_exists:
+                    logging.warning(f"Attempted to grant non-existent achievement ID {achievement_id} in guild {guild_id}")
+                    return False
+
+                # Check current status for the user
+                status_query = """
+                SELECT completed FROM user_achievements 
+                WHERE guild_id = $1 AND user_id = $2 AND achievement_id = $3
+                """
+                current_status = await conn.fetchval(status_query, guild_id, user_id, achievement_id)
+
+                # If already completed, do nothing and return False (not newly granted)
+                if current_status is True:
+                    return False 
+
+                # If record exists but not completed, update it
+                if current_status is False:
+                    update_query = """
+                    UPDATE user_achievements 
+                    SET completed = TRUE, completed_at = CURRENT_TIMESTAMP, progress = 1 -- Assuming progress 1 means completed for direct grant
+                    WHERE guild_id = $1 AND user_id = $2 AND achievement_id = $3 AND completed = FALSE
+                    RETURNING id
+                    """
+                    updated = await conn.fetchval(update_query, guild_id, user_id, achievement_id)
+                    if updated:
+                         # Invalidate relevant caches
+                        invalidate_achievement_caches(guild_id=guild_id, user_id=user_id, achievement_id=achievement_id)
+                        return True # Newly granted
+                    else:
+                        # Race condition? Already updated?
+                        logging.warning(f"Failed to update user_achievement record for user {user_id}, ach {achievement_id} - might already be completed.")
+                        return False # Not newly granted
+
+                # If no record exists, insert it as completed
+                else:
+                    insert_query = """
+                    INSERT INTO user_achievements 
+                        (guild_id, user_id, achievement_id, progress, completed, completed_at)
+                    VALUES 
+                        ($1, $2, $3, 1, TRUE, CURRENT_TIMESTAMP)
+                    ON CONFLICT (guild_id, user_id, achievement_id) DO NOTHING
+                    RETURNING id
+                    """
+                    inserted = await conn.fetchval(insert_query, guild_id, user_id, achievement_id)
+                    if inserted:
+                         # Invalidate relevant caches
+                        invalidate_achievement_caches(guild_id=guild_id, user_id=user_id, achievement_id=achievement_id)
+                        return True # Newly granted
+                    else:
+                        # Conflict likely means it was inserted between check and insert
+                        logging.warning(f"Conflict inserting user_achievement record for user {user_id}, ach {achievement_id} - likely already exists.")
+                        return False # Not newly granted
+
+            except Exception as e:
+                logging.error(f"Error in grant_achievement_db for user {user_id}, achievement {achievement_id}: {e}", exc_info=True)
+                # Ensure transaction is rolled back on error
+                raise
+                # return False # This line is unreachable due to raise
+
+async def check_event_attendance_achievements(guild_id: str, user_id: str):
+    """Check and grant achievements based on event attendance count."""
+    try:
+        # 1. Get the user's total event attendance count for this guild
+        attendance_count = await get_user_event_attendance_count(guild_id, user_id)
+        if attendance_count <= 0:
+            return # No attendance, no achievements to grant
+
+        async with get_connection() as conn:
+            # 2. Find relevant event attendance achievements for this guild
+            query = """
+            SELECT id FROM achievements 
+            WHERE guild_id = $1 AND requirement_type = 'event_attendance' AND requirement_value <= $2
+            ORDER BY requirement_value DESC
+            """
+            potential_achievements = await conn.fetch(query, guild_id, attendance_count)
+
+            if not potential_achievements:
+                return # No matching achievements found
+
+            # 3. Check each potential achievement and grant if not already completed
+            newly_granted_count = 0
+            for record in potential_achievements:
+                achievement_id = record['id']
+                # Use grant_achievement_db which handles checks and updates
+                granted = await grant_achievement_db(guild_id, user_id, achievement_id)
+                if granted:
+                    newly_granted_count += 1
+            
+            if newly_granted_count > 0:
+                 logging.info(f"Granted {newly_granted_count} event attendance achievements to user {user_id} in guild {guild_id}.")
+                 # Caches are invalidated within grant_achievement_db
+
+    except Exception as e:
+        logging.error(f"Error checking event attendance achievements for user {user_id} in guild {guild_id}: {e}", exc_info=True)

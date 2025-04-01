@@ -29,7 +29,8 @@ REQUIREMENT_TYPES = [
     "total_messages",
     "total_reactions",
     "voice_time_seconds",
-    "commands_used"
+    "commands_used",
+    "event_attendance"
 ]
 
 class AchievementCommands(commands.Cog):
@@ -48,7 +49,7 @@ class AchievementCommands(commands.Cog):
             )
             embed.add_field(
                 name="!!achievement create <name> <requirement_type> <value> <description>",
-                value="Create a new achievement",
+                value="Create a new achievement (Types: total_messages, total_reactions, voice_time_seconds, commands_used, event_attendance)",
                 inline=False
             )
             embed.add_field(
@@ -79,13 +80,14 @@ class AchievementCommands(commands.Cog):
         """
         Create a new achievement for this guild
         
-        Example: !!achievement create "Message Master" total_messages 1000 Sent 1000 messages
+        Example: !!achievement create "Event Goer" event_attendance 10 Attended 10 server events
         
         Valid requirement types:
         - total_messages: Total messages sent
         - total_reactions: Total reactions added
         - voice_time_seconds: Time spent in voice channels (in seconds)
         - commands_used: Number of commands used
+        - event_attendance: Number of scheduled events attended
         """
         # Validate requirement type
         if requirement_type not in REQUIREMENT_TYPES:
@@ -433,7 +435,8 @@ class AchievementCommands(commands.Cog):
         app_commands.Choice(name="Messages Sent", value="total_messages"),
         app_commands.Choice(name="Reactions Added", value="total_reactions"),
         app_commands.Choice(name="Voice Time (seconds)", value="voice_time_seconds"),
-        app_commands.Choice(name="Commands Used", value="commands_used")
+        app_commands.Choice(name="Commands Used", value="commands_used"),
+        app_commands.Choice(name="Events Attended", value="event_attendance")
     ])
     @app_commands.checks.has_permissions(administrator=True)
     async def slash_create_achievement(
@@ -444,14 +447,14 @@ class AchievementCommands(commands.Cog):
         requirement_value: int,
         description: str
     ):
-        """Create a new achievement with a slash command"""
-        # Validate requirement value
+        """Create a new achievement using a slash command."""
+        guild_id = str(interaction.guild_id)
+        
+        # Validation (requirement_type is implicitly validated by choices, but value needs check)
         if requirement_value <= 0:
             await interaction.response.send_message("❌ Requirement value must be greater than 0", ephemeral=True)
             return
             
-        # Create the achievement for this guild
-        guild_id = str(interaction.guild.id)
         achievement_id = await create_achievement_db(guild_id, name, description, requirement_type, requirement_value)
         
         if achievement_id > 0:
@@ -462,7 +465,7 @@ class AchievementCommands(commands.Cog):
             )
             embed.add_field(name="Description", value=description, inline=False)
             embed.add_field(name="Requirement", value=f"{requirement_type}: {requirement_value}", inline=True)
-            embed.add_field(name="Badge", value="Not set (use the badge command to add)", inline=True)
+            embed.add_field(name="Badge", value="Not set (use /achievementbadge to add)", inline=True)
             await interaction.response.send_message(embed=embed)
         else:
             await interaction.response.send_message("❌ Failed to create achievement. Please try again.", ephemeral=True)

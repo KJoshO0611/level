@@ -63,10 +63,10 @@ try:
         record_event_attendance,
         get_event_attendees
     )
-    from database.xp_boost_events import create_xp_boost_event, end_xp_boost_event # Assuming these exist
+    from database.events import create_xp_boost_event, delete_xp_boost_event # Changed from database.xp_boost_events
     
     # Module imports for rewards
-    # from modules.achievements import grant_achievement # Import if/when achievement reward is added
+    from database.achievements import grant_achievement_db, check_event_attendance_achievements # Added the new check function
     
     root_logger.info("All modules imported successfully")
 except Exception as e:
@@ -397,12 +397,16 @@ def setup_event_handlers(bot):
 
     @bot.event
     async def on_scheduled_event_create(event: discord.ScheduledEvent):
-        """Handles creation of a new scheduled event."""
+        """Handles creation of a new scheduled event and potentially creates the XP boost."""
         root_logger.info(f"Scheduled event created: {event.id} ({event.name}) in guild {event.guild_id}")
+        guild_id = str(event.guild_id)
+        event_id = str(event.id)
+        
         try:
+            # 1. Log the event first
             await log_scheduled_event(
-                guild_id=str(event.guild_id),
-                event_id=str(event.id),
+                guild_id=guild_id,
+                event_id=event_id,
                 name=event.name,
                 description=event.description or "",
                 start_time=event.start_time.replace(tzinfo=None), # Store as naive UTC
@@ -411,8 +415,48 @@ def setup_event_handlers(bot):
                 status=str(event.status.name).upper(),
                 creator_id=str(event.creator_id)
             )
+            
+            # 2. Check settings and potentially create the associated XP boost immediately
+            settings = await get_guild_event_settings(guild_id)
+            if settings.get('enable_auto_boosts', False):
+                multiplier = 1.0
+                event_type_str = str(event.entity_type.name).lower()
+                if event_type_str == 'voice':
+                    multiplier = settings.get('default_boost_voice', 1.5)
+                elif event_type_str == 'stage_instance':
+                    multiplier = settings.get('default_boost_stage', 1.2)
+                elif event_type_str == 'external':
+                    multiplier = settings.get('default_boost_external', 1.1)
+                
+                # Ensure multiplier is > 1 and event has an end time
+                if multiplier > 1.0 and event.end_time:
+                    boost_name = f"Event Boost: {event.name[:50]}"
+                    creator_id_str = str(event.creator_id) if event.creator_id else "SYSTEM"
+                    
+                    # Convert datetime objects to timestamps (float)
+                    start_timestamp = event.start_time.timestamp()
+                    end_timestamp = event.end_time.timestamp()
+                    
+                    boost_id = await create_xp_boost_event(
+                        guild_id=guild_id,
+                        start_time=start_timestamp, # Pass timestamp
+                        end_time=end_timestamp,     # Pass timestamp
+                        multiplier=multiplier,
+                        name=boost_name,
+                        created_by=creator_id_str
+                    )
+                    if boost_id:
+                        await link_xp_boost_to_event(event_id, boost_id)
+                        root_logger.info(f"Created XP boost {boost_id} ({multiplier:.2f}x) linked to scheduled event {event_id}")
+                    else:
+                         root_logger.error(f"Failed to create XP boost for scheduled event {event_id}")
+                else:
+                    root_logger.info(f"Skipping XP boost creation for scheduled event {event_id}: Auto-boosts enabled, but multiplier <= 1.0 or no end time.")
+            else:
+                 root_logger.info(f"Skipping XP boost creation for scheduled event {event_id}: Auto-boosts disabled for guild {guild_id}")
+
         except Exception as e:
-            root_logger.error(f"Error logging created scheduled event {event.id}: {e}", exc_info=True)
+            root_logger.error(f"Error handling created scheduled event {event.id}: {e}", exc_info=True)
 
     @bot.event
     async def on_scheduled_event_delete(event: discord.ScheduledEvent):
@@ -424,8 +468,8 @@ def setup_event_handlers(bot):
             # Optionally, end any associated XP boost if one was created prematurely
             logged_event = await get_scheduled_event_by_id(str(event.id))
             if logged_event and logged_event.get('associated_boost_id'):
-                await end_xp_boost_event(logged_event['associated_boost_id'])
-                root_logger.info(f"Ended XP boost {logged_event['associated_boost_id']} associated with cancelled event {event.id}")
+                await delete_xp_boost_event(logged_event['associated_boost_id'])
+                root_logger.info(f"Ended XP boost {logged_event['associated_boost_id']} associated with deleted event {event.id}")
         except Exception as e:
             root_logger.error(f"Error handling deleted scheduled event {event.id}: {e}", exc_info=True)
 
@@ -443,8 +487,8 @@ def setup_event_handlers(bot):
                 event_id=event_id,
                 name=after.name,
                 description=after.description or "",
-                start_time=after.start_time.replace(tzinfo=None), # Store as naive UTC
-                end_time=after.end_time.replace(tzinfo=None) if after.end_time else None, # Store as naive UTC
+                start_time=after.start_time.replace(tzinfo=None),
+                end_time=after.end_time.replace(tzinfo=None) if after.end_time else None,
                 event_type=str(after.entity_type.name).upper(),
                 status=str(after.status.name).upper(),
                 creator_id=str(after.creator_id)
@@ -457,66 +501,63 @@ def setup_event_handlers(bot):
 
                 # --- Event Started ---                
                 if after.status == discord.EventStatus.active:
-                    if settings.get('enable_auto_boosts', False):
-                        multiplier = 1.0
-                        event_type_str = str(after.entity_type.name).lower()
-                        if event_type_str == 'voice':
-                            multiplier = settings.get('default_boost_voice', 1.5)
-                        elif event_type_str == 'stage_instance':
-                             multiplier = settings.get('default_boost_stage', 1.2)
-                        elif event_type_str == 'external':
-                             multiplier = settings.get('default_boost_external', 1.1)
-                        
-                        if multiplier > 1.0 and after.end_time:
-                            boost_name = f"Event Boost: {after.name[:50]}"
-                            boost_id = await create_xp_boost_event(
-                                guild_id=guild_id,
-                                start_time=after.start_time.replace(tzinfo=None), # Use event times
-                                end_time=after.end_time.replace(tzinfo=None),
-                                multiplier=multiplier,
-                                name=boost_name
-                            )
-                            if boost_id:
-                                await link_xp_boost_to_event(event_id, boost_id)
-                                root_logger.info(f"Created XP boost {boost_id} ({multiplier:.2f}x) for active event {event_id}")
-                        else:
-                             root_logger.info(f"Skipping XP boost creation for event {event_id}: Multiplier <= 1.0 or no end time.")
-                    else:
-                        root_logger.info(f"Auto XP boosts disabled for guild {guild_id}, skipping boost for event {event_id}")
+                    # Boost should have been created in on_scheduled_event_create
+                    # We don't need to do anything here regarding boost creation.
+                    root_logger.info(f"Scheduled event {event_id} is now ACTIVE.")
+                    pass # Placeholder if any other 'active' logic is needed later
 
                 # --- Event Completed ---                
                 elif after.status == discord.EventStatus.completed:
+                    # End the associated boost if it exists
                     if logged_event and logged_event.get('associated_boost_id'):
-                        await end_xp_boost_event(logged_event['associated_boost_id'])
+                        await delete_xp_boost_event(logged_event['associated_boost_id'])
                         root_logger.info(f"Ended XP boost {logged_event['associated_boost_id']} associated with completed event {event_id}")
                     
                     # Award attendance rewards if enabled
                     if settings.get('enable_attendance_rewards', False):
                         attendees = await get_event_attendees(event_id)
                         bonus_xp = settings.get('attendance_bonus_xp', 0)
-                        # achievement_id = settings.get('attendance_achievement_id') # Get achievement ID if set
+                        achievement_id_str = settings.get('attendance_achievement_id')
 
-                        if bonus_xp > 0 and attendees:
-                            root_logger.info(f"Awarding attendance bonus XP ({bonus_xp}) for event {event_id} to {len(attendees)} users.")
+                        if (bonus_xp > 0 or achievement_id_str) and attendees:
+                            root_logger.info(f"Processing attendance rewards for event {event_id} for {len(attendees)} users.")
                             for attendee in attendees:
                                 user_id = attendee['user_id']
                                 member = after.guild.get_member(int(user_id))
                                 if member and not member.bot:
                                     try:
-                                        await award_xp_without_event_multiplier(member.guild.id, member.id, bonus_xp, "event_attendance", bot)
-                                        root_logger.debug(f"Awarded {bonus_xp} bonus XP to {member.name} ({user_id}) for attending event {event_id}")
-                                        # If achievement integration is added:
-                                        # if achievement_id:
-                                        #     await grant_achievement(guild_id, user_id, achievement_id, bot)
+                                        # Award Bonus XP
+                                        if bonus_xp > 0:
+                                            await award_xp_without_event_multiplier(guild_id, user_id, bonus_xp, "event_attendance", bot)
+                                            root_logger.debug(f"Awarded {bonus_xp} bonus XP to {member.name} ({user_id}) for attending event {event_id}")
+                                        
+                                        # Award SPECIFIC Attendance Achievement (if set)
+                                        if achievement_id_str:
+                                            try:
+                                                achievement_id = int(achievement_id_str)
+                                                granted = await grant_achievement_db(guild_id, user_id, achievement_id)
+                                                if granted:
+                                                    root_logger.info(f"Awarded achievement ID {achievement_id} to {member.name} ({user_id}) for attending event {event_id}")
+                                                else:
+                                                     root_logger.debug(f"Achievement ID {achievement_id} not newly granted to {user_id} (likely already possessed)." ) 
+                                            except ValueError:
+                                                root_logger.error(f"Invalid achievement ID format ({achievement_id_str}) configured for guild {guild_id}")
+                                            except Exception as ach_error:
+                                                 root_logger.error(f"Error granting achievement {achievement_id_str} to {user_id}: {ach_error}")
+
+                                        # Check for GENERAL Event Attendance Achievements (counts)
+                                        await check_event_attendance_achievements(guild_id, user_id)
+                                                 
                                     except Exception as reward_error:
-                                        root_logger.error(f"Error awarding attendance reward to {user_id} for event {event_id}: {reward_error}")
+                                        root_logger.error(f"Error processing attendance rewards for {user_id} for event {event_id}: {reward_error}")
                         else:
-                             root_logger.info(f"Skipping attendance rewards for event {event_id}: Rewards disabled, zero XP, or no attendees.")
+                             root_logger.info(f"Skipping attendance rewards for event {event_id}: Rewards disabled, zero XP/no achievement set, or no attendees.")
                 
                 # --- Event Cancelled --- 
                 elif after.status == discord.EventStatus.cancelled:
+                    # End the associated boost if it exists
                     if logged_event and logged_event.get('associated_boost_id'):
-                        await end_xp_boost_event(logged_event['associated_boost_id'])
+                        await delete_xp_boost_event(logged_event['associated_boost_id'])
                         root_logger.info(f"Ended XP boost {logged_event['associated_boost_id']} associated with cancelled event {event_id}")
 
         except Exception as e:
