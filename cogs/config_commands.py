@@ -20,7 +20,9 @@ from database import (
     set_quest_channel,
     get_quest_cooldowns,
     update_quest_cooldown,
-    update_quest_cooldowns
+    update_quest_cooldowns,
+    set_quest_reset_time,
+    set_quest_reset_day
 )
 from config import load_config, XP_SETTINGS, QUEST_SETTINGS
 
@@ -603,6 +605,129 @@ class ConfigCommands(commands.Cog):
             await interaction.response.send_message("✅ Quest cooldowns reset to default values", ephemeral=True)
         else:
             await interaction.response.send_message("❌ Failed to reset quest cooldown settings", ephemeral=True)
+    
+    @commands.command(name="setquestresettime", aliases=["sqrt"])
+    @commands.has_permissions(administrator=True)
+    @auto_delete_command()
+    async def set_quest_reset_time_cmd(self, ctx, hour: int):
+        """
+        Set the hour of day (in UTC) when daily quests reset
+        
+        Usage: !setquestresettime 0
+        
+        The hour must be 0-23 in UTC time.
+        0 = midnight UTC, 12 = noon UTC
+        """
+        if not 0 <= hour <= 23:
+            await ctx.send("❌ Error: Hour must be between 0-23 (UTC time)")
+            return
+            
+        guild_id = str(ctx.guild.id)
+        
+        # Update the reset hour
+        success = await set_quest_reset_time(guild_id, hour)
+        
+        if success:
+            await ctx.send(f"✅ Daily quest reset time set to {hour}:00 UTC")
+        else:
+            await ctx.send("❌ Failed to update quest reset time")
+    
+    @commands.command(name="setquestresetday", aliases=["sqrd"])
+    @commands.has_permissions(administrator=True)
+    @auto_delete_command()
+    async def set_quest_reset_day_cmd(self, ctx, day: int):
+        """
+        Set the day of week when weekly quests reset
+        
+        Usage: !setquestresetday 0
+        
+        The day must be 0-6:
+        0 = Monday, 1 = Tuesday, 2 = Wednesday, 3 = Thursday,
+        4 = Friday, 5 = Saturday, 6 = Sunday
+        """
+        if not 0 <= day <= 6:
+            await ctx.send("❌ Error: Day must be between 0-6 (0=Monday, 6=Sunday)")
+            return
+            
+        days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+        day_name = days[day]
+        
+        guild_id = str(ctx.guild.id)
+        
+        # Update the reset day
+        success = await set_quest_reset_day(guild_id, day)
+        
+        if success:
+            await ctx.send(f"✅ Weekly quest reset day set to {day_name}")
+        else:
+            await ctx.send("❌ Failed to update quest reset day")
+    
+    @app_commands.command(name="questresettimes", description="Set when quests reset")
+    @app_commands.describe(
+        reset_hour="Hour of day in UTC when daily quests reset (0-23)",
+        reset_day="Day of week when weekly quests reset (0=Monday, 6=Sunday)"
+    )
+    @app_commands.choices(reset_day=[
+        app_commands.Choice(name="Monday", value=0),
+        app_commands.Choice(name="Tuesday", value=1),
+        app_commands.Choice(name="Wednesday", value=2),
+        app_commands.Choice(name="Thursday", value=3),
+        app_commands.Choice(name="Friday", value=4),
+        app_commands.Choice(name="Saturday", value=5),
+        app_commands.Choice(name="Sunday", value=6)
+    ])
+    @app_commands.checks.has_permissions(administrator=True)
+    async def set_quest_reset_times(self, interaction: discord.Interaction, reset_hour: int, reset_day: int):
+        """Set the times when quests reset for this server"""
+        guild_id = str(interaction.guild.id)
+        
+        # Validate hour
+        if not 0 <= reset_hour <= 23:
+            await interaction.response.send_message(
+                "❌ Reset hour must be between 0-23 (UTC time)", 
+                ephemeral=True
+            )
+            return
+        
+        # Update settings
+        success_hour = await set_quest_reset_time(guild_id, reset_hour)
+        success_day = await set_quest_reset_day(guild_id, reset_day)
+        
+        days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+        day_name = days[reset_day]
+        
+        if success_hour and success_day:
+            embed = discord.Embed(
+                title="Quest Reset Times Updated",
+                description="Quest reset settings have been updated for this server.",
+                color=discord.Color.green()
+            )
+            
+            embed.add_field(
+                name="Daily Quest Reset",
+                value=f"**{reset_hour}:00 UTC**",
+                inline=True
+            )
+            
+            embed.add_field(
+                name="Weekly Quest Reset",
+                value=f"**{day_name}** at **{reset_hour}:00 UTC**",
+                inline=True
+            )
+            
+            # Add explanation about when it takes effect
+            embed.add_field(
+                name="When will this take effect?",
+                value="The new reset times will be used the next time the hourly reset check runs.",
+                inline=False
+            )
+            
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+        else:
+            await interaction.response.send_message(
+                "❌ Failed to update quest reset settings. Please try again later.",
+                ephemeral=True
+            )
 
 # Setup function for the cog
 async def setup(bot):

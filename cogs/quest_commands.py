@@ -19,7 +19,8 @@ from database import (
     get_user_active_quests,
     get_user_quest_stats,
     check_quest_progress,
-    award_quest_rewards
+    award_quest_rewards,
+    get_quest_reset_settings
 )
 from utils.rate_limiter import rate_limit, guild_key, user_key
 from utils.command_utils import auto_delete_command
@@ -433,6 +434,9 @@ class QuestCommands(commands.Cog):
         !quest reset daily - Reset daily quests
         !quest reset weekly - Reset weekly quests
         !quest reset - Reset both daily and weekly
+        
+        Note: New quests will be automatically generated at the next scheduled reset time.
+        You can configure reset times with !setquestresettime and !setquestresetday.
         """
         guild_id = str(ctx.guild.id)
         
@@ -440,14 +444,27 @@ class QuestCommands(commands.Cog):
             await ctx.send("Invalid quest type. Use 'daily' or 'weekly'.")
             return
             
-        # Confirm reset
+        # Get the guild's reset settings
+        reset_hour, reset_day = await get_quest_reset_settings(guild_id)
+        
+        # Convert day number to name
+        days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+        day_name = days[reset_day]
+        
+        # Confirm reset with reset time info
         if quest_type:
             confirm_msg = await ctx.send(
-                f"Are you sure you want to reset all {quest_type} quests? (yes/no)"
+                f"Are you sure you want to reset all {quest_type} quests? (yes/no)\n\n"
+                f"Note: New {quest_type} quests will be generated during the next scheduled reset at "
+                f"{reset_hour}:00 UTC"
+                + (f" on {day_name}" if quest_type.lower() == 'weekly' else "")
             )
         else:
             confirm_msg = await ctx.send(
-                "Are you sure you want to reset all daily and weekly quests? (yes/no)"
+                f"Are you sure you want to reset all daily and weekly quests? (yes/no)\n\n"
+                f"Note: New quests will be generated during the next scheduled reset.\n"
+                f"• Daily quests reset at {reset_hour}:00 UTC\n"
+                f"• Weekly quests reset on {day_name} at {reset_hour}:00 UTC"
             )
         
         # Wait for confirmation
@@ -463,7 +480,11 @@ class QuestCommands(commands.Cog):
                 if quest_type:
                     success = await mark_quests_inactive(guild_id, quest_type.lower())
                     if success:
-                        await ctx.send(f"✅ All {quest_type} quests have been reset.")
+                        await ctx.send(
+                            f"✅ All {quest_type} quests have been reset.\n\n"
+                            f"New quests will be generated at {reset_hour}:00 UTC"
+                            + (f" on {day_name}" if quest_type.lower() == 'weekly' else "")
+                        )
                     else:
                         await ctx.send(f"❌ Failed to reset {quest_type} quests.")
                 else:
@@ -472,7 +493,13 @@ class QuestCommands(commands.Cog):
                     success_weekly = await mark_quests_inactive(guild_id, 'weekly')
                     
                     if success_daily and success_weekly:
-                        await ctx.send("✅ All daily and weekly quests have been reset.")
+                        await ctx.send(
+                            "✅ All daily and weekly quests have been reset.\n\n"
+                            f"New quests will be generated on their scheduled reset times:\n"
+                            f"• Daily quests: {reset_hour}:00 UTC\n"
+                            f"• Weekly quests: {day_name} at {reset_hour}:00 UTC\n\n"
+                            f"You can change these times with `!setquestresettime` and `!setquestresetday`"
+                        )
                     else:
                         await ctx.send("❌ Failed to reset some quests.")
             else:

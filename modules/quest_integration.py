@@ -18,7 +18,8 @@ from database import (
     create_quest,
     get_quest_channel,
     get_level_up_channel,
-    get_quest_cooldowns
+    get_quest_cooldowns,
+    get_quest_reset_settings
 )
 
 # Import original handler at module level
@@ -375,8 +376,8 @@ class QuestManager:
     
     def __init__(self, bot):
         self.bot = bot
-        self.daily_reset_time = 0  # Hour of day for daily reset (UTC)
-        self.weekly_reset_day = 0  # Day of week for weekly reset (0 = Monday)
+        self.daily_reset_time = 0  # Default hour of day for daily reset (UTC)
+        self.weekly_reset_day = 0  # Default day of week for weekly reset (0 = Monday)
         
     def start(self):
         """Start all background tasks"""
@@ -391,18 +392,25 @@ class QuestManager:
     
     @tasks.loop(hours=1)
     async def check_quest_resets(self):
-        """Check if it's time to reset daily or weekly quests"""
+        """Check if it's time to reset daily or weekly quests for each guild"""
         now = datetime.utcnow()
         
-        # Check for daily reset
-        if now.hour == self.daily_reset_time:
-            logging.info("Performing daily quest reset")
-            await self.reset_daily_quests()
-        
-        # Check for weekly reset (default: Monday)
-        if now.weekday() == self.weekly_reset_day and now.hour == self.daily_reset_time:
-            logging.info("Performing weekly quest reset")
-            await self.reset_weekly_quests()
+        # Process each guild separately since they might have different reset times
+        for guild in self.bot.guilds:
+            guild_id = str(guild.id)
+            
+            # Get guild-specific reset settings
+            reset_hour, reset_day = await get_quest_reset_settings(guild_id)
+            
+            # Check for daily reset
+            if now.hour == reset_hour:
+                logging.info(f"Performing daily quest reset for guild {guild.name} ({guild_id})")
+                await self.reset_daily_quests_for_guild(guild_id, guild.name)
+            
+            # Check for weekly reset (on specific day and time)
+            if now.weekday() == reset_day and now.hour == reset_hour:
+                logging.info(f"Performing weekly quest reset for guild {guild.name} ({guild_id})")
+                await self.reset_weekly_quests_for_guild(guild_id, guild.name)
     
     @check_quest_resets.before_loop
     async def before_check_quest_resets(self):
@@ -423,16 +431,24 @@ class QuestManager:
             # Reset each guild's daily quests
             for guild in self.bot.guilds:
                 guild_id = str(guild.id)
-                
-                # Mark old daily quests as inactive
-                await mark_quests_inactive(guild_id, "daily")
-                logging.info(f"Daily quests reset for guild {guild.name} ({guild_id})")
-                
-                # Auto-create new daily quests if enabled
-                await self.create_daily_quests(guild_id)
+                await self.reset_daily_quests_for_guild(guild_id, guild.name)
                 
         except Exception as e:
             logging.error(f"Error in daily quest reset: {e}")
+    
+    async def reset_daily_quests_for_guild(self, guild_id, guild_name=None):
+        """Reset daily quests for a specific guild"""
+        try:
+            # Mark old daily quests as inactive
+            await mark_quests_inactive(guild_id, "daily")
+            guild_name = guild_name or guild_id
+            logging.info(f"Daily quests reset for guild {guild_name} ({guild_id})")
+            
+            # Auto-create new daily quests if enabled
+            await self.create_daily_quests(guild_id)
+                
+        except Exception as e:
+            logging.error(f"Error in daily quest reset for guild {guild_id}: {e}")
     
     async def reset_weekly_quests(self):
         """Reset weekly quests across all guilds"""
@@ -440,16 +456,24 @@ class QuestManager:
             # Reset each guild's weekly quests
             for guild in self.bot.guilds:
                 guild_id = str(guild.id)
-                
-                # Mark old weekly quests as inactive
-                await mark_quests_inactive(guild_id, "weekly")
-                logging.info(f"Weekly quests reset for guild {guild.name} ({guild_id})")
-                
-                # Auto-create new weekly quests if enabled
-                await self.create_weekly_quests(guild_id)
+                await self.reset_weekly_quests_for_guild(guild_id, guild.name)
                 
         except Exception as e:
             logging.error(f"Error in weekly quest reset: {e}")
+    
+    async def reset_weekly_quests_for_guild(self, guild_id, guild_name=None):
+        """Reset weekly quests for a specific guild"""
+        try:
+            # Mark old weekly quests as inactive
+            await mark_quests_inactive(guild_id, "weekly")
+            guild_name = guild_name or guild_id
+            logging.info(f"Weekly quests reset for guild {guild_name} ({guild_id})")
+            
+            # Auto-create new weekly quests if enabled
+            await self.create_weekly_quests(guild_id)
+                
+        except Exception as e:
+            logging.error(f"Error in weekly quest reset for guild {guild_id}: {e}")
     
     async def create_daily_quests(self, guild_id):
         """Auto-create new daily quests for a guild"""
