@@ -86,367 +86,6 @@ async def with_connection():
     finally:
         await _pool.release(conn)
 
-async def update_achievement_schema(bot=None):
-    """
-    Add guild_id column to achievements table if it doesn't exist
-    
-    This function is called during database initialization to migrate
-    the achievements table schema if needed.
-    """
-    try:
-        # Use either bot's connection or get a new one
-        if bot:
-            async with bot.db.acquire() as conn:
-                # Check if guild_id column exists
-                check_query = """
-                SELECT column_name 
-                FROM information_schema.columns 
-                WHERE table_name = 'achievements' AND column_name = 'guild_id'
-                """
-                
-                has_guild_id = await conn.fetchval(check_query)
-                
-                # If guild_id column doesn't exist, add it
-                if not has_guild_id:
-                    logging.info("Migrating achievements table to add guild_id column")
-                    
-                    async with conn.transaction():
-                        # Add the guild_id column
-                        await conn.execute("ALTER TABLE achievements ADD COLUMN guild_id TEXT")
-                        
-                        # Set a default guild_id for existing achievements
-                        # This assigns '0' to all existing achievements
-                        await conn.execute("UPDATE achievements SET guild_id = '0' WHERE guild_id IS NULL")
-                        
-                        # Make the column not nullable
-                        await conn.execute("ALTER TABLE achievements ALTER COLUMN guild_id SET NOT NULL")
-                        
-                        # Add an index for performance
-                        await conn.execute("CREATE INDEX IF NOT EXISTS idx_achievements_guild_id ON achievements(guild_id)")
-                        
-                    logging.info("Successfully migrated achievements table")
-                    return True
-                
-                logging.info("Achievements table already has guild_id column - no migration needed")
-                return True
-        else:
-            # Standalone mode - use direct pool connection
-            async with with_connection() as conn:
-                # Check if guild_id column exists
-                check_query = """
-                SELECT column_name 
-                FROM information_schema.columns 
-                WHERE table_name = 'achievements' AND column_name = 'guild_id'
-                """
-                
-                has_guild_id = await conn.fetchval(check_query)
-                
-                # If guild_id column doesn't exist, add it
-                if not has_guild_id:
-                    logging.info("Migrating achievements table to add guild_id column")
-                    
-                    async with conn.transaction():
-                        # Add the guild_id column
-                        await conn.execute("ALTER TABLE achievements ADD COLUMN guild_id TEXT")
-                        
-                        # Set a default guild_id for existing achievements
-                        # This assigns '0' to all existing achievements
-                        await conn.execute("UPDATE achievements SET guild_id = '0' WHERE guild_id IS NULL")
-                        
-                        # Make the column not nullable
-                        await conn.execute("ALTER TABLE achievements ALTER COLUMN guild_id SET NOT NULL")
-                        
-                        # Add an index for performance
-                        await conn.execute("CREATE INDEX IF NOT EXISTS idx_achievements_guild_id ON achievements(guild_id)")
-                        
-                    logging.info("Successfully migrated achievements table")
-                    return True
-                
-                logging.info("Achievements table already has guild_id column - no migration needed")
-                return True
-            
-    except Exception as e:
-        logging.error(f"Error migrating achievements table: {e}")
-        return False
-
-async def update_server_config_schema(bot=None):
-    """
-    Add achievement_channel and quest_channel columns to server_config table if they don't exist
-    and modify level_up_channel to accept null values
-    
-    This function is called during database initialization to migrate
-    the server_config table schema if needed.
-    """
-    try:
-        if bot:
-            async with bot.db.acquire() as conn:
-                # First, modify level_up_channel to accept null values
-                logging.info("Migrating server_config table to allow null values for level_up_channel")
-                await conn.execute("ALTER TABLE server_config ALTER COLUMN level_up_channel DROP NOT NULL")
-                logging.info("Successfully modified level_up_channel column")
-                
-                # Check if achievement_channel column exists
-                check_query = """
-                SELECT column_name 
-                FROM information_schema.columns 
-                WHERE table_name = 'server_config' AND column_name = 'achievement_channel'
-                """
-                
-                has_achievement_channel = await conn.fetchval(check_query)
-                
-                # If achievement_channel column doesn't exist, add it
-                if not has_achievement_channel:
-                    logging.info("Migrating server_config table to add achievement_channel column")
-                    
-                    async with conn.transaction():
-                        # Add the achievement_channel column
-                        await conn.execute("ALTER TABLE server_config ADD COLUMN achievement_channel TEXT")
-                        
-                    logging.info("Successfully added achievement_channel column")
-                
-                # Check if quest_channel column exists
-                check_query = """
-                SELECT column_name 
-                FROM information_schema.columns 
-                WHERE table_name = 'server_config' AND column_name = 'quest_channel'
-                """
-                
-                has_quest_channel = await conn.fetchval(check_query)
-                
-                # If quest_channel column doesn't exist, add it
-                if not has_quest_channel:
-                    logging.info("Migrating server_config table to add quest_channel column")
-                    
-                    async with conn.transaction():
-                        # Add the quest_channel column
-                        await conn.execute("ALTER TABLE server_config ADD COLUMN quest_channel TEXT")
-                        
-                    logging.info("Successfully added quest_channel column")
-                
-                return True
-        else:
-            # Standalone mode - use direct pool connection
-            async with with_connection() as conn:
-                # First, modify level_up_channel to accept null values
-                logging.info("Migrating server_config table to allow null values for level_up_channel")
-                await conn.execute("ALTER TABLE server_config ALTER COLUMN level_up_channel DROP NOT NULL")
-                logging.info("Successfully modified level_up_channel column")
-                
-                # Check if achievement_channel column exists
-                check_query = """
-                SELECT column_name 
-                FROM information_schema.columns 
-                WHERE table_name = 'server_config' AND column_name = 'achievement_channel'
-                """
-                
-                has_achievement_channel = await conn.fetchval(check_query)
-                
-                # If achievement_channel column doesn't exist, add it
-                if not has_achievement_channel:
-                    logging.info("Migrating server_config table to add achievement_channel column")
-                    
-                    async with conn.transaction():
-                        # Add the achievement_channel column
-                        await conn.execute("ALTER TABLE server_config ADD COLUMN achievement_channel TEXT")
-                        
-                    logging.info("Successfully added achievement_channel column")
-                
-                # Check if quest_channel column exists
-                check_query = """
-                SELECT column_name 
-                FROM information_schema.columns 
-                WHERE table_name = 'server_config' AND column_name = 'quest_channel'
-                """
-                
-                has_quest_channel = await conn.fetchval(check_query)
-                
-                # If quest_channel column doesn't exist, add it
-                if not has_quest_channel:
-                    logging.info("Migrating server_config table to add quest_channel column")
-                    
-                    async with conn.transaction():
-                        # Add the quest_channel column
-                        await conn.execute("ALTER TABLE server_config ADD COLUMN quest_channel TEXT")
-                        
-                    logging.info("Successfully added quest_channel column")
-                
-                return True
-            
-    except Exception as e:
-        logging.error(f"Error migrating server_config table: {e}")
-        return False
-
-async def create_user_achievement_settings_table(bot=None):
-    """Create the user_achievement_settings table if it doesn't exist.
-    This table stores user preferences related to achievements, like selected title display.
-    """
-    try:
-        if bot:
-            async with bot.db.acquire() as conn:
-                # Implementation with bot connection
-                # First check if the update_updated_at_column function exists
-                function_exists_query = """
-                SELECT 1 FROM pg_proc WHERE proname = 'update_updated_at_column';
-                """
-                function_exists = await conn.fetchval(function_exists_query)
-                
-                # Create the function if it doesn't exist
-                if not function_exists:
-                    logging.info("Creating update_updated_at_column function...")
-                    create_function_query = """
-                    CREATE OR REPLACE FUNCTION update_updated_at_column()
-                    RETURNS TRIGGER AS $$
-                    BEGIN
-                        NEW.updated_at = CURRENT_TIMESTAMP;
-                        RETURN NEW;
-                    END;
-                    $$ LANGUAGE plpgsql;
-                    """
-                    await conn.execute(create_function_query)
-                    logging.info("update_updated_at_column function created successfully")
-                
-                # Check if table exists
-                check_query = """
-                SELECT EXISTS (
-                    SELECT FROM information_schema.tables 
-                    WHERE table_name = 'user_achievement_settings'
-                );
-                """
-                exists = await conn.fetchval(check_query)
-                
-                if not exists:
-                    logging.info("Creating user_achievement_settings table...")
-                    
-                    # Create the table
-                    create_query = """
-                    CREATE TABLE user_achievement_settings (
-                        id SERIAL PRIMARY KEY,
-                        guild_id TEXT NOT NULL,
-                        user_id TEXT NOT NULL,
-                        selected_title TEXT,
-                        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                        UNIQUE(guild_id, user_id)
-                    );
-                    
-                    -- Add trigger to update the updated_at column
-                    CREATE TRIGGER update_user_achievement_settings_updated_at
-                    BEFORE UPDATE ON user_achievement_settings
-                    FOR EACH ROW
-                    EXECUTE FUNCTION update_updated_at_column();
-                    """
-                    
-                    await conn.execute(create_query)
-                    logging.info("user_achievement_settings table created successfully")
-                else:
-                    logging.info("user_achievement_settings table already exists")
-        else:
-            # Standalone mode - use direct pool connection
-            async with with_connection() as conn:
-                # Same implementation as above, without bot connection
-                # First check if the update_updated_at_column function exists
-                function_exists_query = """
-                SELECT 1 FROM pg_proc WHERE proname = 'update_updated_at_column';
-                """
-                function_exists = await conn.fetchval(function_exists_query)
-                
-                # Create the function if it doesn't exist
-                if not function_exists:
-                    logging.info("Creating update_updated_at_column function...")
-                    create_function_query = """
-                    CREATE OR REPLACE FUNCTION update_updated_at_column()
-                    RETURNS TRIGGER AS $$
-                    BEGIN
-                        NEW.updated_at = CURRENT_TIMESTAMP;
-                        RETURN NEW;
-                    END;
-                    $$ LANGUAGE plpgsql;
-                    """
-                    await conn.execute(create_function_query)
-                    logging.info("update_updated_at_column function created successfully")
-                
-                # Check if table exists
-                check_query = """
-                SELECT EXISTS (
-                    SELECT FROM information_schema.tables 
-                    WHERE table_name = 'user_achievement_settings'
-                );
-                """
-                exists = await conn.fetchval(check_query)
-                
-                if not exists:
-                    logging.info("Creating user_achievement_settings table...")
-                    
-                    # Create the table
-                    create_query = """
-                    CREATE TABLE user_achievement_settings (
-                        id SERIAL PRIMARY KEY,
-                        guild_id TEXT NOT NULL,
-                        user_id TEXT NOT NULL,
-                        selected_title TEXT,
-                        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                        UNIQUE(guild_id, user_id)
-                    );
-                    
-                    -- Add trigger to update the updated_at column
-                    CREATE TRIGGER update_user_achievement_settings_updated_at
-                    BEFORE UPDATE ON user_achievement_settings
-                    FOR EACH ROW
-                    EXECUTE FUNCTION update_updated_at_column();
-                    """
-                    
-                    await conn.execute(create_query)
-                    logging.info("user_achievement_settings table created successfully")
-                else:
-                    logging.info("user_achievement_settings table already exists")
-                
-        return True
-    except Exception as e:
-        logging.error(f"Error creating user_achievement_settings table: {e}")
-        return False
-
-async def migration_version_8():
-    """
-    Migration to add quest_cooldowns column to server_config table
-    """
-    try:
-        async with with_connection() as conn:
-            # Check if column exists already
-            check_query = """
-            SELECT column_name FROM information_schema.columns 
-            WHERE table_name = 'server_config' AND column_name = 'quest_cooldowns'
-            """
-            result = await conn.fetchval(check_query)
-            
-            if not result:
-                # Add the column
-                add_column_query = """
-                ALTER TABLE server_config 
-                ADD COLUMN IF NOT EXISTS quest_cooldowns JSONB DEFAULT NULL
-                """
-                await conn.execute(add_column_query)
-                
-                # Initialize with default values from config
-                from config import QUEST_SETTINGS
-                update_query = """
-                UPDATE server_config 
-                SET quest_cooldowns = $1
-                WHERE quest_cooldowns IS NULL
-                """
-                # Serialize the dictionary to a JSON string
-                cooldowns_json = json.dumps(QUEST_SETTINGS["COOLDOWNS"])
-                await conn.execute(update_query, cooldowns_json)
-                
-                logging.info("Migration 8: Added quest_cooldowns column to server_config table")
-            else:
-                logging.info("Migration 8: server_config.quest_cooldowns column already exists")
-            
-            return True
-    except Exception as e:
-        logging.error(f"Migration 8 error: {e}")
-        return False
-
 # Helper function to apply migrations from files
 async def apply_migration_from_file(migration_file_path: str, bot=None):
     """Reads and applies SQL from a migration file."""
@@ -532,6 +171,48 @@ async def apply_migration_from_file(migration_file_path: str, bot=None):
         logging.error(f"Error applying migration from file {migration_file_path}: {e}", exc_info=True)
         return False
 
+# Function to get all available migrations
+def get_available_migrations(root_dir=None):
+    """
+    Scans the database/migrations directory and returns a sorted list of migration files.
+    Files should be named in format: NNN_description.py where NNN is a number.
+    """
+    if root_dir is None:
+        if __name__ == "__main__":
+            root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        else:
+            root_dir = os.getcwd()
+    
+    migrations_dir = os.path.join(root_dir, "database", "migrations")
+    
+    # Check if migrations directory exists
+    if not os.path.isdir(migrations_dir):
+        logging.warning(f"Migrations directory not found: {migrations_dir}")
+        return []
+    
+    # Get all python files in the migrations directory
+    migration_files = []
+    try:
+        for file in os.listdir(migrations_dir):
+            if file.endswith('.py') and file[0].isdigit():
+                migration_files.append(file)
+    except Exception as e:
+        logging.error(f"Error scanning migrations directory: {e}")
+        return []
+    
+    # Sort migration files by their number prefix
+    def get_migration_number(filename):
+        # Extract the migration number from the filename (e.g., 001_migration.py -> 1)
+        parts = filename.split('_', 1)
+        if parts and parts[0].isdigit():
+            return int(parts[0])
+        return 0
+    
+    migration_files.sort(key=get_migration_number)
+    
+    # Return the full paths to the migration files
+    return [os.path.join("database", "migrations", file) for file in migration_files]
+
 # Add a function to run all migrations
 async def run_all_migrations(bot=None):
     """
@@ -560,34 +241,14 @@ async def run_all_migrations(bot=None):
             migration_version_8(), # Migration 8 (internal)
         ]
         
-        # Get project root directory
-        if __name__ == "__main__":
-            root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        else:
-            root_dir = os.getcwd()
-            
-        # File-based migrations - check which ones exist
-        migrations_dir = os.path.join(root_dir, "database", "migrations")
+        # Get all migration files from the migrations directory
+        migration_files = get_available_migrations()
         file_migrations = []
         
-        # Define the migrations we want to run
-        migration_file_paths = [
-            "database/migrations/005_add_event_integration_columns.py",
-            "database/migrations/006_add_quest_specific_progress.py",
-            "database/migrations/007_fix_event_column_names.py",
-            "database/migrations/008_fix_event_attendance_columns.py",
-            "database/migrations/009_fix_discord_events_schema.py"
-        ]
-        
-        # Check which ones exist and add them to the tasks
-        for file_path in migration_file_paths:
-            abs_path = os.path.join(root_dir, file_path)
-            if os.path.isfile(abs_path):
-                file_migrations.append(apply_migration_from_file(file_path, bot))
-                logging.info(f"Adding migration file to queue: {file_path}")
-            else:
-                logging.warning(f"Migration file not found, skipping: {file_path}")
-                logging.warning(f"Absolute path searched: {abs_path}")
+        # Create tasks for each migration file
+        for file_path in migration_files:
+            file_migrations.append(apply_migration_from_file(file_path, bot))
+            logging.info(f"Adding migration file to queue: {file_path}")
         
         # Combine all migration tasks
         migration_tasks = core_migration_tasks + file_migrations
@@ -596,8 +257,8 @@ async def run_all_migrations(bot=None):
         
         # Check for any failures
         success = True
-        # First 4 results are from core migrations
-        for i, result in enumerate(results[:4]):
+        # First check core migrations
+        for i, result in enumerate(results[:len(core_migration_tasks)]):
             migration_name = f"Internal Migration {i+1}"
             if i == 3: migration_name = "Migration 8 (Internal)"
             
@@ -608,16 +269,15 @@ async def run_all_migrations(bot=None):
                 logging.error(f"{migration_name} returned False")
                 success = False
         
-        # Remaining results are from file migrations
-        for i, result in enumerate(results[4:]):
-            file_index = i + 5 # File migrations start at 005
-            migration_name = f"Migration {file_index:03d} (File)"
+        # Then check file migrations
+        for i, result in enumerate(results[len(core_migration_tasks):]):
+            migration_name = os.path.basename(migration_files[i])
             
             if isinstance(result, Exception):
-                logging.error(f"{migration_name} failed with error: {result}")
+                logging.error(f"File migration {migration_name} failed with error: {result}")
                 success = False
             elif result is False:
-                logging.error(f"{migration_name} returned False")
+                logging.error(f"File migration {migration_name} returned False")
                 success = False
         
         if success:
@@ -648,20 +308,19 @@ async def run_specific_migrations(migration_names, bot=None):
         "update_server_config_schema": update_server_config_schema,
         "create_user_achievement_settings_table": create_user_achievement_settings_table,
         "migration_version_8": migration_version_8,
-        "005_add_event_integration_columns": lambda: apply_migration_from_file("database/migrations/005_add_event_integration_columns.py", bot),
-        "006_add_quest_specific_progress": lambda: apply_migration_from_file("database/migrations/006_add_quest_specific_progress.py", bot),
-        "007_fix_event_column_names": lambda: apply_migration_from_file("database/migrations/007_fix_event_column_names.py", bot),
-        "008_fix_event_attendance_columns": lambda: apply_migration_from_file("database/migrations/008_fix_event_attendance_columns.py", bot),
-        "009_fix_discord_events_schema": lambda: apply_migration_from_file("database/migrations/009_fix_discord_events_schema.py", bot),
     }
     
     tasks = []
     for name in migration_names:
+        # First check if it's a core migration
         if name in migration_map:
             if name.startswith("update_") or name.startswith("create_"):
                 tasks.append(migration_map[name](bot))
             else:
                 tasks.append(migration_map[name]())
+        # Then check if it's a file migration
+        elif os.path.exists(os.path.join("database", "migrations", name)):
+            tasks.append(apply_migration_from_file(os.path.join("database", "migrations", name), bot))
         else:
             logging.error(f"Unknown migration: {name}")
     
@@ -696,9 +355,6 @@ async def run_specific_migrations(migration_names, bot=None):
 
 # Export the public functions
 __all__ = [
-    'update_achievement_schema',
-    'update_server_config_schema',
-    'create_user_achievement_settings_table',
     'run_all_migrations',
     'run_specific_migrations'
 ]
@@ -714,7 +370,7 @@ async def main():
     subparsers = parser.add_subparsers(dest='command', help='Migration command')
     
     # Add 'all' command
-    all_parser = subparsers.add_parser('all', help='Run all migrations')
+    all_parser = subparsers.add_parser('all', help='Run all core schema migrations')
     
     # Add 'specific' command
     specific_parser = subparsers.add_parser('specific', help='Run specific migrations')
@@ -757,20 +413,28 @@ async def main():
             return 0 if success else 1
         
         elif args.command == 'list':
-            migrations = [
-                "update_achievement_schema", 
-                "update_server_config_schema",
-                "create_user_achievement_settings_table", 
-                "migration_version_8",
-                "005_add_event_integration_columns",
-                "006_add_quest_specific_progress",
-                "007_fix_event_column_names",
-                "008_fix_event_attendance_columns",
-                "009_fix_discord_events_schema"
+            # List core migrations
+            core_migrations = [
+
             ]
-            print("Available migrations:")
-            for migration in migrations:
+            print("Available core migrations:")
+            for migration in core_migrations:
                 print(f"  - {migration}")
+            
+            # List file-based migrations
+            print("\nFile-based migrations:")
+            migration_files = get_available_migrations()
+            if migration_files:
+                for file_path in migration_files:
+                    migration_name = os.path.basename(file_path)
+                    print(f"  - {migration_name}")
+            else:
+                print("  No file-based migrations found in database/migrations directory")
+            
+            print("\nTo add a new migration, create a file in the database/migrations directory")
+            print("Format: NNN_description.py where NNN is a number (e.g., 010_add_new_column.py)")
+            print("Each migration file should contain APPLY_SQL and REVERT_SQL sections")
+            
             return 0
         
         else:
