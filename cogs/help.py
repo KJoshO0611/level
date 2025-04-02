@@ -4,6 +4,8 @@ from discord.ext import commands
 import typing
 from datetime import datetime
 import logging
+from typing import Optional
+from utils.command_utils import auto_delete_command
 
 # Dictionary mapping cog names to emojis and descriptions
 COG_EMOJI_MAP = {
@@ -447,8 +449,9 @@ class CustomHelpCommand(commands.Cog):
         return embed
     
     @commands.command(name="help")
-    async def help_command(self, ctx, *, command_name: typing.Optional[str] = None):
-        """Interactive help menu - browse commands by category"""
+    @auto_delete_command()
+    async def help_command(self, ctx, *, command_name: Optional[str] = None):
+        """Show help information about the bot and its commands"""
         # Check if user has admin permissions
         is_admin = ctx.author.guild_permissions.administrator if ctx.guild else False
         

@@ -22,6 +22,7 @@ from database import (
     award_quest_rewards
 )
 from utils.rate_limiter import rate_limit, guild_key, user_key
+from utils.command_utils import auto_delete_command
 
 class QuestCommands(commands.Cog):
     def __init__(self, bot):
@@ -29,6 +30,7 @@ class QuestCommands(commands.Cog):
     
     # ===== GROUP COMMANDS =====
     @commands.group(name="quest", aliases=["quests", "q"])
+    @auto_delete_command()
     async def quest(self, ctx):
         """Quest system commands"""
         if ctx.invoked_subcommand is None:
@@ -81,6 +83,7 @@ class QuestCommands(commands.Cog):
     # ===== USER COMMANDS =====
     @quest.command(name="list")
     @rate_limit(calls=5, period=60)  # 5 calls per minute per user
+    @auto_delete_command()
     async def list_quests(self, ctx):
         """List all your active quests"""
         guild_id = str(ctx.guild.id)
@@ -170,6 +173,7 @@ class QuestCommands(commands.Cog):
     
     @quest.command(name="info")
     @rate_limit(calls=10, period=60)  # 10 calls per minute per user
+    @auto_delete_command()
     async def quest_info(self, ctx, quest_id: int):
         """View detailed information about a specific quest"""
         guild_id = str(ctx.guild.id)
@@ -241,6 +245,7 @@ class QuestCommands(commands.Cog):
     
     @quest.command(name="stats")
     @rate_limit(calls=5, period=60)  # 5 calls per minute per user
+    @auto_delete_command()
     async def quest_stats(self, ctx):
         """View your quest statistics"""
         guild_id = str(ctx.guild.id)
@@ -304,6 +309,7 @@ class QuestCommands(commands.Cog):
     
     @quest.command(name="daily")
     @rate_limit(calls=5, period=60)  # 5 calls per minute per user
+    @auto_delete_command()
     async def daily_quests(self, ctx):
         """View your daily quests"""
         guild_id = str(ctx.guild.id)
@@ -331,6 +337,7 @@ class QuestCommands(commands.Cog):
     
     @quest.command(name="weekly")
     @rate_limit(calls=5, period=60)  # 5 calls per minute per user
+    @auto_delete_command()
     async def weekly_quests(self, ctx):
         """View your weekly quests"""
         guild_id = str(ctx.guild.id)
@@ -359,6 +366,7 @@ class QuestCommands(commands.Cog):
     # ===== ADMIN COMMANDS =====
     @quest.command(name="create")
     @commands.has_permissions(administrator=True)
+    @auto_delete_command()
     async def create_quest_cmd(self, ctx):
         """Start the interactive quest creation process"""
         # This is just a stub - the actual creation would use a questionnaire
@@ -367,12 +375,14 @@ class QuestCommands(commands.Cog):
     
     @quest.command(name="edit")
     @commands.has_permissions(administrator=True)
+    @auto_delete_command()
     async def edit_quest(self, ctx, quest_id: int):
         """Edit an existing quest"""
         await ctx.send("Use the slash command `/editquest` for an easier interface.")
     
     @quest.command(name="delete")
     @commands.has_permissions(administrator=True)
+    @auto_delete_command()
     async def delete_quest_cmd(self, ctx, quest_id: int):
         """Delete a quest"""
         guild_id = str(ctx.guild.id)
@@ -414,6 +424,7 @@ class QuestCommands(commands.Cog):
     
     @quest.command(name="reset")
     @commands.has_permissions(administrator=True)
+    @auto_delete_command()
     async def reset_quests(self, ctx, quest_type: Optional[str] = None):
         """
         Reset daily/weekly quests to prepare new ones

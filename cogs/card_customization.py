@@ -5,6 +5,8 @@ import aiohttp
 import logging
 from database import set_user_background, get_user_background, remove_user_background
 from config import load_config
+from utils.rate_limiter import rate_limit
+from utils.command_utils import auto_delete_command
 
 # Load the external volume path from config
 config = load_config()
@@ -20,6 +22,8 @@ class BackgroundCommands(commands.Cog):
         logging.info(f"Using background directory: {BACKGROUNDS_DIR}")
 
     @commands.command(name="setbackground", aliases=["setbg"])
+    @rate_limit(calls=3, period=60)  # 3 calls per minute per user 
+    @auto_delete_command()
     async def set_background(self, ctx, *, url: str = None):
         """Set a custom background for your level card. Upload an image or provide a URL."""
         await ctx.message.delete()
@@ -83,6 +87,8 @@ class BackgroundCommands(commands.Cog):
             await ctx.send("Failed to set your background. Please try again with a different image.", delete_after=10)
 
     @commands.command(name="removebackground", aliases=["removebg", "resetbg"])
+    @rate_limit(calls=3, period=60)  # 3 calls per minute per user
+    @auto_delete_command()
     async def remove_background(self, ctx):
         """Remove your custom level card background."""
         await ctx.message.delete()
@@ -115,6 +121,8 @@ class BackgroundCommands(commands.Cog):
             await ctx.send("There was an error removing your background. Please try again later.", delete_after=10)
 
     @commands.command(name="showbackground", aliases=["showbg", "mybg"])
+    @rate_limit(calls=3, period=60)  # 3 calls per minute per user
+    @auto_delete_command()
     async def show_background(self, ctx, member: discord.Member = None):
         """Show the current background for your level card or another member's."""
         await ctx.message.delete()

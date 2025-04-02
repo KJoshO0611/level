@@ -11,6 +11,9 @@ from database import get_active_xp_boost_events, get_upcoming_xp_boost_events
 from utils.rate_limiter import rate_limit, guild_key
 from utils.calendar_generator import generate_event_calendar
 from utils.minimal_calendar import generate_minimal_calendar
+from utils.calendar_image import generate_calendar_image
+from database.events import get_events_for_month
+from utils.command_utils import auto_delete_command
 
 class CalendarCommands(commands.Cog):
     def __init__(self, bot):
@@ -18,6 +21,7 @@ class CalendarCommands(commands.Cog):
     
     @commands.command(name="eventcalendar", aliases=["events", "calendar"])
     @rate_limit(calls=2, period=60, key_func=guild_key)  # 2 calls per minute per guild
+    @auto_delete_command()
     async def event_calendar(self, ctx, month: Optional[int] = None, year: Optional[int] = None):
         """
         Display a calendar showing all XP boost events
@@ -109,6 +113,7 @@ class CalendarCommands(commands.Cog):
         month="Month to display (1-12, defaults to current month)",
         year="Year to display (defaults to current year)"
     )
+    @auto_delete_command()
     async def slash_calendar(self, interaction: discord.Interaction, month: Optional[int] = None, year: Optional[int] = None):
         """Slash command version of the event calendar"""
         guild_id = str(interaction.guild.id)

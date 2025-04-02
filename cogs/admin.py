@@ -21,6 +21,7 @@ from database import (
     get_level_up_channel,
     CHANNEL_XP_BOOSTS
 )
+from utils.command_utils import auto_delete_command
 
 try:
     import psutil
@@ -189,6 +190,8 @@ class AdminCommands(commands.Cog):
         )
 
     @commands.command(name="list_channel_boosts", aliases=["lcboost"])
+    @commands.has_permissions(administrator=True)
+    @auto_delete_command()
     async def list_channel_boosts(self, ctx):
         """List all channels with XP boosts for this guild"""
         guild_id = str(ctx.guild.id)
@@ -241,6 +244,7 @@ class AdminCommands(commands.Cog):
 
     @commands.command(name="reload_channel_boosts", aliases=["rcb"])
     @commands.has_permissions(administrator=True)
+    @auto_delete_command()
     async def reload_channel_boosts(self, ctx):
         """Reload channel XP boosts from the database into memory and show debug info"""
         try:
@@ -343,6 +347,7 @@ class AdminCommands(commands.Cog):
             
     @commands.command(name="dbstatus", aliases=["dbhealth"])
     @commands.has_permissions(administrator=True)
+    @auto_delete_command()
     async def database_status(self, ctx):
         """Display database health and status information"""
         stats = await get_health_stats()
@@ -382,6 +387,7 @@ class AdminCommands(commands.Cog):
 
     @commands.command(name="textstats", aliases=["ts"])
     @commands.has_permissions(administrator=True)
+    @auto_delete_command()
     async def text_stats(self, ctx):
         """Display text rendering cache statistics with memory usage"""
         
@@ -416,6 +422,7 @@ class AdminCommands(commands.Cog):
         
     @commands.command(name="clearcache", aliases=["cc"])
     @commands.has_permissions(administrator=True)
+    @auto_delete_command()
     async def clear_cache(self, ctx, cache_name=None):
         """Clear specific or all image caches"""
         from utils.cairo_image_generator import (
@@ -481,6 +488,7 @@ class AdminCommands(commands.Cog):
 
     @commands.command(name="perfstats", aliases=["botstats"], hidden=True)
     @commands.has_permissions(administrator=True)
+    @auto_delete_command()
     async def performance_status(self, ctx):
         """Show performance metrics for the bot"""
         if not PSUTIL_AVAILABLE:

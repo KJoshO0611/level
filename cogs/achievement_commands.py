@@ -15,6 +15,7 @@ from database import (
     set_user_selected_title_db
 )
 from config import load_config
+from utils.command_utils import auto_delete_command
 
 # Load the external volume path from config
 config = load_config()
@@ -39,6 +40,7 @@ class AchievementCommands(commands.Cog):
         
     @commands.group(name="achievement", aliases=["achieve", "ach"])
     @commands.has_permissions(administrator=True)
+    @auto_delete_command()
     async def achievement(self, ctx):
         """Achievement management commands (Admin only)"""
         if ctx.invoked_subcommand is None:
@@ -75,6 +77,7 @@ class AchievementCommands(commands.Cog):
             await ctx.send(embed=embed)
     
     @achievement.command(name="create")
+    @auto_delete_command()
     async def create_achievement(self, ctx, name: str, requirement_type: str, 
                                 requirement_value: int, *, description: str):
         """
@@ -118,6 +121,7 @@ class AchievementCommands(commands.Cog):
             await ctx.send("❌ Failed to create achievement. Please try again.")
     
     @achievement.command(name="list")
+    @auto_delete_command()
     async def list_achievements(self, ctx):
         """List all achievements for this guild"""
         guild_id = str(ctx.guild.id)
@@ -161,6 +165,7 @@ class AchievementCommands(commands.Cog):
                 await ctx.send(embed=embed)
     
     @achievement.command(name="edit")
+    @auto_delete_command()
     async def edit_achievement(self, ctx, achievement_id: int, field: str, *, value: str):
         """
         Edit an achievement in this guild
@@ -233,6 +238,7 @@ class AchievementCommands(commands.Cog):
                 await ctx.send("❌ Failed to update achievement. Please try again.")
     
     @achievement.command(name="badge")
+    @auto_delete_command()
     async def set_achievement_badge(self, ctx, achievement_id: int):
         """
         Set a badge for an achievement in this guild. Attach an image to your message.
@@ -298,6 +304,7 @@ class AchievementCommands(commands.Cog):
                 await ctx.send("❌ Failed to update achievement badge. Please try again.")
     
     @achievement.command(name="viewbadge")
+    @auto_delete_command()
     async def view_achievement_badge(self, ctx, achievement_id: int):
         """
         View the badge for an achievement in this guild.
@@ -344,6 +351,7 @@ class AchievementCommands(commands.Cog):
             await ctx.send(embed=embed, file=file)
     
     @achievement.command(name="stats")
+    @auto_delete_command()
     async def achievement_stats(self, ctx):
         """View achievement statistics for this server"""
         guild_id = str(ctx.guild.id)

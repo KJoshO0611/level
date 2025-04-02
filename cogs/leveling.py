@@ -7,6 +7,7 @@ from utils.cairo_image_generator import generate_level_card, generate_leaderboar
 from utils.simple_image_handler import generate_image_nonblocking, update_with_image
 import logging
 from utils.rate_limiter import rate_limit, guild_key, user_key
+from utils.command_utils import auto_delete_command
 
 class LevelingCommands(commands.Cog):
     def __init__(self, bot):
@@ -14,6 +15,7 @@ class LevelingCommands(commands.Cog):
 
     @commands.command(name="level", aliases=["lvl"])
     @rate_limit(calls=5, period=60)  # 5 calls per minute per user
+    @auto_delete_command()
     async def level(self, ctx, member: discord.Member = None):
         """Check the level and XP of a member with a visual card."""
         await ctx.message.delete()
@@ -53,6 +55,7 @@ class LevelingCommands(commands.Cog):
 
     @commands.command(name="leaderboard", aliases=["lb"])
     @rate_limit(calls=2, period=30, key_func=guild_key)  # 2 calls per 30 seconds per guild
+    @auto_delete_command()
     async def leaderboard(self, ctx, page: int = 1):
         """Display the top 10 users in this server based on their level and XP."""
         await ctx.message.delete()
@@ -87,6 +90,7 @@ class LevelingCommands(commands.Cog):
             
     @commands.command(name="rank", aliases=["r"])
     @rate_limit(calls=5, period=60)  # 5 calls per minute per user
+    @auto_delete_command()
     async def rank(self, ctx, member: discord.Member = None):
         """Check your rank in the server leaderboard."""
         member = member or ctx.author

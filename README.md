@@ -120,6 +120,10 @@ To create a new migration:
 - `!!achievement info <id>` - Get information about an achievement
 - `!!title set <title>` - Set your display title on your level card
 - `!!title remove` - Remove your current title
+- `!!quests` - View your available and active quests
+- `!!quest info <id>` - View details about a specific quest
+- `!!quest claim <id>` - Claim rewards for a completed quest
+- `!!event list` - View upcoming and active server events
 
 ### Admin Commands
 - `/config` - Open the server configuration dashboard
@@ -145,6 +149,17 @@ To create a new migration:
 - `!!achievement badge <id>` - Upload a badge for an achievement (supports transparent PNG)
 - `!!achievement edit <id>` - Edit an achievement's properties
 - `!!achievement delete <id>` - Delete an achievement
+- `!!quest create` - Create a new quest
+- `!!quest edit <id>` - Edit an existing quest
+- `!!quest delete <id>` - Delete a quest
+- `!!quest reward <id> <type> <value>` - Set rewards for a quest
+- `!!event config` - Configure event settings
+- `!!event stats` - View event statistics and attendance data
+- `!!event rewards` - Configure automatic rewards for event attendance
+- `!!showcase reset <user>` - Reset a user's achievement showcase
+- `!!combo create` - Create an achievement combo
+- `!!combo list` - List all achievement combos
+- `!!combo delete <id>` - Delete an achievement combo
 
 ## Technical Features
 
