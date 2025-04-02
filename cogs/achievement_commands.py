@@ -40,7 +40,6 @@ class AchievementCommands(commands.Cog):
         
     @commands.group(name="achievement", aliases=["achieve", "ach"])
     @commands.has_permissions(administrator=True)
-    @auto_delete_command()
     async def achievement(self, ctx):
         """Achievement management commands (Admin only)"""
         if ctx.invoked_subcommand is None:
@@ -238,7 +237,6 @@ class AchievementCommands(commands.Cog):
                 await ctx.send("❌ Failed to update achievement. Please try again.")
     
     @achievement.command(name="badge")
-    @auto_delete_command()
     async def set_achievement_badge(self, ctx, achievement_id: int):
         """
         Set a badge for an achievement in this guild. Attach an image to your message.
