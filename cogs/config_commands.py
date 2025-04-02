@@ -25,6 +25,7 @@ from database import (
     set_quest_reset_day
 )
 from config import load_config, XP_SETTINGS, QUEST_SETTINGS
+from utils.command_utils import auto_delete_command
 
 # Load configuration
 config = load_config()

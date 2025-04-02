@@ -103,11 +103,14 @@ from .quests import (
     award_quest_rewards,
 )
 
-# Import quest cooldown functions
+# Import quest cooldown and reset functions
 from .server_config import (
     get_quest_cooldowns,
     update_quest_cooldowns,
-    update_quest_cooldown
+    update_quest_cooldown,
+    get_quest_reset_settings,
+    set_quest_reset_time,
+    set_quest_reset_day
 )
 
 # Export all public functions
@@ -147,8 +150,9 @@ __all__ = [
     # Utils
     'safe_db_operation', 'retry_pending_operations',
     
-    # Quest cooldowns
-    'get_quest_cooldowns', 'update_quest_cooldowns', 'update_quest_cooldown'
+    # Quest cooldowns and reset settings
+    'get_quest_cooldowns', 'update_quest_cooldowns', 'update_quest_cooldown',
+    'get_quest_reset_settings', 'set_quest_reset_time', 'set_quest_reset_day'
 ]
 
 # Add these to __all__ list:
