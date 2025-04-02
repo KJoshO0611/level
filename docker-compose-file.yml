@@ -1,0 +1,27 @@
+services:
+  cluelevel:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cluelevel
+    restart: unless-stopped
+    environment:
+      - TOKEN=${TOKEN}                 # Discord bot token
+      - GUILDID=${GUILDID}             # Discord guild ID
+      - HOST=${DB_HOST:-localhost}     # PostgreSQL host (use host.docker.internal to access host machine)
+      - NAME=${DB_NAME:-cluelesslevel}  # Database name
+      - USER=${DB_USER}                # Database user
+      - PASSWORD=${DB_PASSWORD}        # Database password
+    volumes:
+      - /mnt/xvdf/discord-bot:/external_volume  # For backgrounds, templates, and other persistent data
+      - /mnt/xvdf/discord-bot/logs:/app/logs    # For bot logs               # For bot logs
+    networks:
+      - bot-network
+    # Use host networking to access PostgreSQL running on localhost
+    # For Windows/Mac, use network_mode: "host" if needed
+    extra_hosts:
+      - "host.docker.internal:host-gateway"  # This maps host.docker.internal to the host machine
+
+networks:
+  bot-network:
+    driver: bridge

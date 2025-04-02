@@ -5,8 +5,9 @@ utils/__pycache__
 
 .env
 .dockerignore
-dockerfile
 feature_toggle.py
+modules/databasev2.py.bak
+
 
 modules/db.old.py
 .venv
