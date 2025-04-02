@@ -11,8 +11,6 @@ from database import get_active_xp_boost_events, get_upcoming_xp_boost_events
 from utils.rate_limiter import rate_limit, guild_key
 from utils.calendar_generator import generate_event_calendar
 from utils.minimal_calendar import generate_minimal_calendar
-from utils.calendar_image import generate_calendar_image
-from database.events import get_events_for_month
 from utils.command_utils import auto_delete_command
 
 class CalendarCommands(commands.Cog):
