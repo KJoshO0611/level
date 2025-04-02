@@ -235,10 +235,7 @@ async def run_all_migrations(bot=None):
         
         # Core migrations that must always run
         core_migration_tasks = [
-            update_achievement_schema(bot), # Migration 1
-            update_server_config_schema(bot), # Migration 2
-            create_user_achievement_settings_table(bot), # Migration 3
-            migration_version_8(), # Migration 8 (internal)
+
         ]
         
         # Get all migration files from the migrations directory
@@ -304,10 +301,7 @@ async def run_specific_migrations(migration_names, bot=None):
     
     # Map migration names to their functions
     migration_map = {
-        "update_achievement_schema": update_achievement_schema,
-        "update_server_config_schema": update_server_config_schema,
-        "create_user_achievement_settings_table": create_user_achievement_settings_table,
-        "migration_version_8": migration_version_8,
+
     }
     
     tasks = []
