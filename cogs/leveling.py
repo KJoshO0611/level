@@ -18,8 +18,6 @@ class LevelingCommands(commands.Cog):
     @auto_delete_command()
     async def level(self, ctx, member: discord.Member = None):
         """Check the level and XP of a member with a visual card."""
-        await ctx.message.delete()
-
         member = member or ctx.author
         guild_id = str(ctx.guild.id)
         user_id = str(member.id)
@@ -58,8 +56,6 @@ class LevelingCommands(commands.Cog):
     @auto_delete_command()
     async def leaderboard(self, ctx, page: int = 1):
         """Display the top 10 users in this server based on their level and XP."""
-        await ctx.message.delete()
-
         guild_id = str(ctx.guild.id)
         limit = 10
         offset = (page - 1) * limit

@@ -26,8 +26,6 @@ class BackgroundCommands(commands.Cog):
     @auto_delete_command()
     async def set_background(self, ctx, *, url: str = None):
         """Set a custom background for your level card. Upload an image or provide a URL."""
-        await ctx.message.delete()
-        
         # Check if an image was attached
         if not url and ctx.message.attachments:
             url = ctx.message.attachments[0].url
@@ -91,8 +89,6 @@ class BackgroundCommands(commands.Cog):
     @auto_delete_command()
     async def remove_background(self, ctx):
         """Remove your custom level card background."""
-        await ctx.message.delete()
-        
         guild_id = str(ctx.guild.id)
         user_id = str(ctx.author.id)
         
@@ -125,8 +121,6 @@ class BackgroundCommands(commands.Cog):
     @auto_delete_command()
     async def show_background(self, ctx, member: discord.Member = None):
         """Show the current background for your level card or another member's."""
-        await ctx.message.delete()
-        
         member = member or ctx.author
         guild_id = str(ctx.guild.id)
         user_id = str(member.id)

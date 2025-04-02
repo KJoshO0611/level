@@ -47,10 +47,31 @@ async def example_command(self, ctx):
 
 ### For Commands That Already Delete Messages
 
-Some commands may already include `await ctx.message.delete()` at the beginning. For these commands, you have two options:
+⚠️ **IMPORTANT**: You must choose one method of deletion, not both!
 
-1. Remove the existing `await ctx.message.delete()` line and add the decorator
-2. Leave the existing code as is (no need to apply the decorator)
+For commands that already include `await ctx.message.delete()`, you have two options:
+
+1. **RECOMMENDED**: Remove the existing `await ctx.message.delete()` line and add the decorator
+2. Keep the existing `await ctx.message.delete()` code and DO NOT add the decorator
+
+Using both will cause errors as the second deletion attempt will fail with a "404 Not Found" error since the message has already been deleted.
+
+Example of fixing a command:
+
+```python
+# Before (problematic - has both deletion methods)
+@commands.command(name="example")
+@auto_delete_command()  # This tries to delete the message
+async def example_command(self, ctx):
+    await ctx.message.delete()  # This tries to delete it AGAIN - will error!
+    # Rest of command
+    
+# After (fixed - using only the decorator)
+@commands.command(name="example")
+@auto_delete_command()  # Only deletion method
+async def example_command(self, ctx):
+    # Rest of command
+```
 
 ## Files to Update
 
