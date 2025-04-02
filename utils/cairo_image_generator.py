@@ -398,15 +398,24 @@ def optimized_draw_text(ctx, text, x, y, script=None, size=22, rgb_color=(1, 1, 
 def load_image_surface(img_path, width=None, height=None):
     """Load an image into a Cairo surface"""
     try:
+        # Open image and ensure it's in RGBA mode to preserve transparency
         img = Image.open(img_path).convert('RGBA')
         
         # Resize if specified
         if width and height:
             img = img.resize((width, height), Image.LANCZOS)
         
+        # Create a new RGBA image with a transparent background
+        # This ensures that any PNG transparency is properly preserved
+        if img.mode == 'RGBA':
+            # Use existing transparency
+            background = Image.new('RGBA', img.size, (0, 0, 0, 0))
+            background.paste(img, (0, 0), img)
+            img = background
+        
         # Save to temporary file - this is the most reliable way to convert PIL to Cairo surfaces
         with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
-            img.save(tmp.name)
+            img.save(tmp.name, format='PNG')
             tmp_path = tmp.name
         
         # Load with Cairo
@@ -417,21 +426,29 @@ def load_image_surface(img_path, width=None, height=None):
         
         return surface
     except Exception as e:
-        print(f"Error loading image surface: {e}")
+        logging.error(f"Error loading image surface from {img_path}: {e}")
         return None
 
 def load_surface_from_bytes(bytes_io, width=None, height=None):
     """Load an image from bytes into a Cairo surface"""
     try:
+        # Open image and ensure it's in RGBA mode to preserve transparency
         img = Image.open(bytes_io).convert('RGBA')
         
         # Resize if specified
         if width and height:
             img = img.resize((width, height), Image.LANCZOS)
         
+        # Create a new RGBA image with a transparent background
+        # This ensures that any PNG transparency is properly preserved
+        if img.mode == 'RGBA':
+            background = Image.new('RGBA', img.size, (0, 0, 0, 0))
+            background.paste(img, (0, 0), img)
+            img = background
+        
         # Save to temporary file
         with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
-            img.save(tmp.name)
+            img.save(tmp.name, format='PNG')
             tmp_path = tmp.name
         
         # Load with Cairo
@@ -442,7 +459,7 @@ def load_surface_from_bytes(bytes_io, width=None, height=None):
         
         return surface
     except Exception as e:
-        print(f"Error loading image from bytes: {e}")
+        logging.error(f"Error loading image from bytes: {e}")
         return None
 
 def draw_text_with_pil(ctx, text, x, y, pil_font, rgb_color=(1, 1, 1), centered=False):
@@ -984,11 +1001,11 @@ def _generate_level_card_cairo_sync(avatar_bytes, username, user_id, level, xp, 
                 
                 # Draw badge rounded square background
                 radius = mini_badge_size / 5  # smaller radius for more square-like appearance
-                rounded_rectangle(ctx, badge_x, mini_badges_y, mini_badge_size, mini_badge_size, radius)
-                ctx.set_source_rgb(*accent_color)
-                ctx.fill()
                 
-                # Try to load and draw the actual badge image from icon_path
+                # Try to load the badge image first to check for transparency
+                badge_transparent = False
+                badge_surface = None
+                
                 try:
                     if "icon_path" in achievement and achievement["icon_path"]:
                         # Construct the full path to the badge
@@ -998,35 +1015,79 @@ def _generate_level_card_cairo_sync(avatar_bytes, username, user_id, level, xp, 
                             badge_path = os.path.join(EXTERNAL_VOLUME_PATH, badge_path)
                             
                         if os.path.exists(badge_path):
-                            # Load the badge image
-                            badge_surface = load_image_surface(badge_path, mini_badge_size, mini_badge_size)
-                            
-                            if badge_surface:
-                                # Draw the badge image
-                                ctx.save()
+                            # Check if the image has transparency
+                            try:
+                                with Image.open(badge_path) as img:
+                                    # Convert to RGBA to ensure alpha channel exists
+                                    img = img.convert('RGBA')
+                                    # Check if the image has transparency
+                                    badge_transparent = img.getchannel('A').getextrema()[0] < 255
+                                    # Load the badge surface
+                                    badge_surface = load_image_surface(badge_path, mini_badge_size, mini_badge_size)
+                            except Exception as e:
+                                logging.warning(f"Error checking badge transparency: {e}")
+                except Exception as e:
+                    logging.warning(f"Error pre-loading badge: {e}")
+                
+                # Only draw the background if the badge isn't transparent or if we couldn't load it
+                if not badge_transparent or badge_surface is None:
+                    rounded_rectangle(ctx, badge_x, mini_badges_y, mini_badge_size, mini_badge_size, radius)
+                    ctx.set_source_rgb(*accent_color)
+                    ctx.fill()
+                
+                # Now draw the badge if we have it loaded already
+                if badge_surface:
+                    # Draw the badge image
+                    ctx.save()
+                    
+                    # Create rounded square clipping path
+                    rounded_rectangle(ctx, badge_x, mini_badges_y, mini_badge_size, mini_badge_size, radius)
+                    ctx.clip()
+                    
+                    # Draw badge
+                    ctx.set_source_surface(badge_surface, badge_x, mini_badges_y)
+                    ctx.paint()
+                    ctx.restore()
+                else:
+                    # Try to load and draw the actual badge image from icon_path
+                    try:
+                        if "icon_path" in achievement and achievement["icon_path"]:
+                            # Construct the full path to the badge
+                            badge_path = achievement["icon_path"]
+                            # If the path is relative, join with EXTERNAL_VOLUME_PATH
+                            if badge_path and not os.path.isabs(badge_path):
+                                badge_path = os.path.join(EXTERNAL_VOLUME_PATH, badge_path)
                                 
-                                # Create rounded square clipping path
-                                rounded_rectangle(ctx, badge_x, mini_badges_y, mini_badge_size, mini_badge_size, radius)
-                                ctx.clip()
+                            if os.path.exists(badge_path):
+                                # Load the badge image
+                                badge_surface = load_image_surface(badge_path, mini_badge_size, mini_badge_size)
                                 
-                                # Draw badge
-                                ctx.set_source_surface(badge_surface, badge_x, mini_badges_y)
-                                ctx.paint()
-                                ctx.restore()
+                                if badge_surface:
+                                    # Draw the badge image
+                                    ctx.save()
+                                    
+                                    # Create rounded square clipping path
+                                    rounded_rectangle(ctx, badge_x, mini_badges_y, mini_badge_size, mini_badge_size, radius)
+                                    ctx.clip()
+                                    
+                                    # Draw badge
+                                    ctx.set_source_surface(badge_surface, badge_x, mini_badges_y)
+                                    ctx.paint()
+                                    ctx.restore()
+                                else:
+                                    # Fallback to drawing a placeholder if loading fails
+                                    draw_placeholder_badge(ctx, badge_x, mini_badges_y, mini_badge_size)
                             else:
-                                # Fallback to drawing a placeholder if loading fails
+                                # Fallback to drawing a placeholder if file doesn't exist
+                                logging.debug(f"Badge file not found: {badge_path}")
                                 draw_placeholder_badge(ctx, badge_x, mini_badges_y, mini_badge_size)
                         else:
-                            # Fallback to drawing a placeholder if file doesn't exist
-                            logging.debug(f"Badge file not found: {badge_path}")
+                            # Fallback to drawing a placeholder if no icon_path
                             draw_placeholder_badge(ctx, badge_x, mini_badges_y, mini_badge_size)
-                    else:
-                        # Fallback to drawing a placeholder if no icon_path
+                    except Exception as e:
+                        logging.error(f"Error loading badge image: {e}")
+                        # Fallback to drawing a placeholder if loading fails
                         draw_placeholder_badge(ctx, badge_x, mini_badges_y, mini_badge_size)
-                except Exception as e:
-                    logging.error(f"Error loading badge image: {e}")
-                    # Fallback to drawing a placeholder if loading fails
-                    draw_placeholder_badge(ctx, badge_x, mini_badges_y, mini_badge_size)
         elif selected_title:  # Handle case where there's a title but no badges
             # Draw title only
             mini_badges_x = avatar_pos_x + avatar_size + 20
