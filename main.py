@@ -171,6 +171,10 @@ async def initialize_services(bot):
         root_logger.error("Failed to initialize database")
         return False
     
+    # Run database migrations
+    root_logger.info("Running database migrations...")
+    await run_all_migrations(bot)
+    
     # Start voice tracking
     root_logger.info("Starting voice tracking...")
     await start_voice_tracking(bot)
@@ -583,7 +587,8 @@ def setup_event_handlers(bot):
             await record_event_attendance(
                 event_id=str(event.id),
                 guild_id=str(event.guild_id),
-                user_id=str(user.id)
+                user_id=str(user.id),
+                status="active"
             )
         except Exception as e:
              root_logger.error(f"Error recording attendance for user {user.id} at event {event.id}: {e}", exc_info=True)

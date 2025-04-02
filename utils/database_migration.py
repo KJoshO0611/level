@@ -448,21 +448,43 @@ async def migration_version_8():
         return False
 
 # Helper function to apply migrations from files
-async def apply_migration_from_file(migration_file_path: str):
+async def apply_migration_from_file(migration_file_path: str, bot=None):
     """Reads and applies SQL from a migration file."""
     try:
-        # Ensure path is absolute if running standalone
-        if __name__ == "__main__" and not os.path.isabs(migration_file_path):
-            # Get project root directory
+        # Get project root directory for resolving paths
+        if __name__ == "__main__":
             root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            migration_file_path = os.path.join(root_dir, migration_file_path)
+        else:
+            root_dir = os.getcwd()
+            
+        # Clean up the path format for Windows/Unix compatibility    
+        migration_file_path = migration_file_path.replace('\\', '/')
         
+        # Try the relative path (from current working directory)
+        if not os.path.isabs(migration_file_path):
+            full_path = os.path.join(root_dir, migration_file_path)
+            if os.path.isfile(full_path):
+                migration_file_path = full_path
+            else:
+                # Also try a path from the database directory
+                database_path = os.path.join(root_dir, "database")
+                migration_name = os.path.basename(migration_file_path)
+                alt_path = os.path.join(database_path, "migrations", migration_name)
+                if os.path.isfile(alt_path):
+                    migration_file_path = alt_path
+                else:
+                    # If we can't find it, log details and return
+                    logging.warning(f"Migration file not found: {migration_file_path}")
+                    logging.warning(f"Tried paths: {full_path} and {alt_path}")
+                    logging.warning(f"Current directory: {os.getcwd()}")
+                    logging.warning(f"Root directory: {root_dir}")
+                    return False
+        
+        logging.info(f"Reading migration from: {migration_file_path}")
         with open(migration_file_path, 'r') as f:
             # We assume the file contains APPLY_SQL and REVERT_SQL blocks.
             # For simplicity, we execute everything for now, assuming APPLY_SQL is first.
             # A more robust implementation would parse this properly.
-            # NOTE: This simple approach might fail if the file structure changes significantly.
-            # We will read APPLY_SQL specifically
             content = f.read()
             apply_sql_start = content.find('APPLY_SQL = """')
             if apply_sql_start == -1:
@@ -480,11 +502,28 @@ async def apply_migration_from_file(migration_file_path: str):
             if not apply_sql:
                  logging.warning(f"APPLY_SQL block is empty in {migration_file_path}")
                  return True # Not an error, just nothing to apply
-                 
-        # Use direct pool connection for file migrations
-        async with with_connection() as conn:
-            await conn.execute(apply_sql)
-        logging.info(f"Successfully applied migration from file: {migration_file_path}")
+        
+        # Use bot's connection if available, otherwise use standalone pool
+        if bot and hasattr(bot, 'db') and hasattr(bot.db, 'acquire'):
+            logging.info(f"Using bot's database connection for migration: {migration_file_path}")
+            async with bot.db.acquire() as conn:
+                await conn.execute(apply_sql)
+                logging.info(f"Successfully applied migration using bot connection: {migration_file_path}")
+        else:
+            # Use direct pool connection for standalone migrations
+            global _pool
+            if _pool is None:
+                logging.warning(f"Database connection not initialized for migration: {migration_file_path}")
+                logging.info("Attempting to set up database connection...")
+                success = await setup_db()
+                if not success:
+                    logging.error("Failed to initialize database connection for migration")
+                    return False
+                
+            async with with_connection() as conn:
+                await conn.execute(apply_sql)
+                logging.info(f"Successfully applied migration with standalone connection: {migration_file_path}")
+                
         return True
     except FileNotFoundError:
         logging.error(f"Migration file not found: {migration_file_path}")
@@ -504,35 +543,75 @@ async def run_all_migrations(bot=None):
     logging.info("Running all database migrations...")
     
     try:
-        # Run migrations in sequence
-        migration_tasks = [
+        # Initialize the database connection pool for standalone mode if needed
+        global _pool
+        if _pool is None and bot is None:
+            logging.info("Initializing database connection for migrations...")
+            success = await setup_db()
+            if not success:
+                logging.error("Failed to initialize database connection for migrations")
+                return False
+        
+        # Core migrations that must always run
+        core_migration_tasks = [
             update_achievement_schema(bot), # Migration 1
             update_server_config_schema(bot), # Migration 2
             create_user_achievement_settings_table(bot), # Migration 3
-            # migration_version_4 - 7 seem missing based on numbering
             migration_version_8(), # Migration 8 (internal)
-            apply_migration_from_file("database/migrations/003_add_event_integration_tables.py"), # Migration '003' (file-based)
-            apply_migration_from_file("database/migrations/004_add_event_attendance_counter.py"), # Migration '004' (file-based)
-            apply_migration_from_file("database/migrations/005_add_event_integration_columns.py"), # Migration '005' (file-based)
-            apply_migration_from_file("database/migrations/006_add_quest_specific_progress.py"), # Migration '006' (file-based)
-            apply_migration_from_file("database/migrations/007_fix_event_column_names.py"), # Migration '007' (file-based)
-            apply_migration_from_file("database/migrations/008_fix_event_attendance_columns.py") # Migration '008' (file-based)
         ]
+        
+        # Get project root directory
+        if __name__ == "__main__":
+            root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        else:
+            root_dir = os.getcwd()
+            
+        # File-based migrations - check which ones exist
+        migrations_dir = os.path.join(root_dir, "database", "migrations")
+        file_migrations = []
+        
+        # Define the migrations we want to run
+        migration_file_paths = [
+            "database/migrations/005_add_event_integration_columns.py",
+            "database/migrations/006_add_quest_specific_progress.py",
+            "database/migrations/007_fix_event_column_names.py",
+            "database/migrations/008_fix_event_attendance_columns.py",
+            "database/migrations/009_fix_discord_events_schema.py"
+        ]
+        
+        # Check which ones exist and add them to the tasks
+        for file_path in migration_file_paths:
+            abs_path = os.path.join(root_dir, file_path)
+            if os.path.isfile(abs_path):
+                file_migrations.append(apply_migration_from_file(file_path, bot))
+                logging.info(f"Adding migration file to queue: {file_path}")
+            else:
+                logging.warning(f"Migration file not found, skipping: {file_path}")
+                logging.warning(f"Absolute path searched: {abs_path}")
+        
+        # Combine all migration tasks
+        migration_tasks = core_migration_tasks + file_migrations
         
         results = await asyncio.gather(*migration_tasks, return_exceptions=True)
         
         # Check for any failures
         success = True
-        for i, result in enumerate(results):
-            # Adjust logging to better reflect migration source
-            migration_name = f"Internal Migration {i+1}" 
+        # First 4 results are from core migrations
+        for i, result in enumerate(results[:4]):
+            migration_name = f"Internal Migration {i+1}"
             if i == 3: migration_name = "Migration 8 (Internal)"
-            if i == 4: migration_name = "Migration 003 (File)"
-            if i == 5: migration_name = "Migration 004 (File)" 
-            if i == 6: migration_name = "Migration 005 (File)"
-            if i == 7: migration_name = "Migration 006 (File)"
-            if i == 8: migration_name = "Migration 007 (File)"
-            if i == 9: migration_name = "Migration 008 (File)"
+            
+            if isinstance(result, Exception):
+                logging.error(f"{migration_name} failed with error: {result}")
+                success = False
+            elif result is False:
+                logging.error(f"{migration_name} returned False")
+                success = False
+        
+        # Remaining results are from file migrations
+        for i, result in enumerate(results[4:]):
+            file_index = i + 5 # File migrations start at 005
+            migration_name = f"Migration {file_index:03d} (File)"
             
             if isinstance(result, Exception):
                 logging.error(f"{migration_name} failed with error: {result}")
@@ -569,12 +648,11 @@ async def run_specific_migrations(migration_names, bot=None):
         "update_server_config_schema": update_server_config_schema,
         "create_user_achievement_settings_table": create_user_achievement_settings_table,
         "migration_version_8": migration_version_8,
-        "003_add_event_integration_tables": lambda: apply_migration_from_file("database/migrations/003_add_event_integration_tables.py"),
-        "004_add_event_attendance_counter": lambda: apply_migration_from_file("database/migrations/004_add_event_attendance_counter.py"),
-        "005_add_event_integration_columns": lambda: apply_migration_from_file("database/migrations/005_add_event_integration_columns.py"),
-        "006_add_quest_specific_progress": lambda: apply_migration_from_file("database/migrations/006_add_quest_specific_progress.py"),
-        "007_fix_event_column_names": lambda: apply_migration_from_file("database/migrations/007_fix_event_column_names.py"),
-        "008_fix_event_attendance_columns": lambda: apply_migration_from_file("database/migrations/008_fix_event_attendance_columns.py"),
+        "005_add_event_integration_columns": lambda: apply_migration_from_file("database/migrations/005_add_event_integration_columns.py", bot),
+        "006_add_quest_specific_progress": lambda: apply_migration_from_file("database/migrations/006_add_quest_specific_progress.py", bot),
+        "007_fix_event_column_names": lambda: apply_migration_from_file("database/migrations/007_fix_event_column_names.py", bot),
+        "008_fix_event_attendance_columns": lambda: apply_migration_from_file("database/migrations/008_fix_event_attendance_columns.py", bot),
+        "009_fix_discord_events_schema": lambda: apply_migration_from_file("database/migrations/009_fix_discord_events_schema.py", bot),
     }
     
     tasks = []
@@ -684,12 +762,11 @@ async def main():
                 "update_server_config_schema",
                 "create_user_achievement_settings_table", 
                 "migration_version_8",
-                "003_add_event_integration_tables",
-                "004_add_event_attendance_counter",
                 "005_add_event_integration_columns",
                 "006_add_quest_specific_progress",
                 "007_fix_event_column_names",
-                "008_fix_event_attendance_columns"
+                "008_fix_event_attendance_columns",
+                "009_fix_discord_events_schema"
             ]
             print("Available migrations:")
             for migration in migrations:

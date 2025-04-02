@@ -51,6 +51,10 @@ async def update_guild_event_settings(guild_id: str, settings: dict):
 
 async def log_scheduled_event(guild_id: str, event_id: str, name: str, description: str, start_time: datetime, end_time: datetime, event_type: str, status: str, creator_id: str):
     """Log or update a Discord scheduled event in the database."""
+    # Convert datetime objects to Unix timestamps (float)
+    start_timestamp = start_time.timestamp() if start_time else None
+    end_timestamp = end_time.timestamp() if end_time else None
+    
     query = """
     INSERT INTO discord_scheduled_events (event_id, guild_id, name, description, start_time, end_time, event_type, status, creator_id, updated_at)
     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
@@ -65,7 +69,7 @@ async def log_scheduled_event(guild_id: str, event_id: str, name: str, descripti
     RETURNING internal_id
     """
     async with get_connection() as conn:
-        internal_id = await conn.fetchval(query, event_id, guild_id, name, description, start_time, end_time, event_type, status, creator_id)
+        internal_id = await conn.fetchval(query, event_id, guild_id, name, description, start_timestamp, end_timestamp, event_type, status, creator_id)
     logging.info(f"Logged/Updated Discord event {event_id} ({name}) for guild {guild_id}. Status: {status}")
     return internal_id
 
@@ -90,16 +94,16 @@ async def get_scheduled_event_by_id(event_id: str) -> dict | None:
         event_data = await conn.fetchrow(query, event_id)
         return dict(event_data) if event_data else None
 
-async def record_event_attendance(event_id: str, guild_id: str, user_id: str):
+async def record_event_attendance(event_id: str, guild_id: str, user_id: str, status: str = "active"):
     """Record a user's attendance (joining) for an event."""
     query = """
-    INSERT INTO event_attendance (event_id, guild_id, user_id, joined_at)
-    VALUES ($1, $2, $3, NOW())
+    INSERT INTO event_attendance (event_id, guild_id, user_id, joined_at, status)
+    VALUES ($1, $2, $3, NOW(), $4)
     ON CONFLICT (event_id, user_id) DO NOTHING
     """
     async with get_connection() as conn:
-        await conn.execute(query, event_id, guild_id, user_id)
-    logging.debug(f"Recorded attendance for user {user_id} at event {event_id} in guild {guild_id}")
+        await conn.execute(query, event_id, guild_id, user_id, status)
+    logging.debug(f"Recorded attendance for user {user_id} at event {event_id} in guild {guild_id}, status: {status}")
 
 async def get_event_attendees(event_id: str) -> list[dict]:
     """Get all users recorded as attending an event."""

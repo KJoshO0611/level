@@ -269,16 +269,17 @@ async def _create_tables(bot):
 
             await conn.execute('''
                 CREATE TABLE IF NOT EXISTS discord_scheduled_events (
-                    event_id TEXT PRIMARY KEY,
+                    internal_id SERIAL PRIMARY KEY,
+                    event_id TEXT NOT NULL UNIQUE,
                     guild_id TEXT NOT NULL,
                     name TEXT NOT NULL,
                     description TEXT,
                     start_time DOUBLE PRECISION NOT NULL,
                     end_time DOUBLE PRECISION,
+                    event_type TEXT,
                     status TEXT NOT NULL,
-                    entity_type TEXT NOT NULL,
-                    entity_id TEXT,
-                    creator_id TEXT NOT NULL,
+                    creator_id TEXT,
+                    associated_boost_id INTEGER,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
@@ -289,7 +290,8 @@ async def _create_tables(bot):
                     id SERIAL PRIMARY KEY,
                     event_id TEXT REFERENCES discord_scheduled_events(event_id),
                     user_id TEXT NOT NULL,
-                    status TEXT NOT NULL,
+                    guild_id TEXT NOT NULL,
+                    status TEXT,
                     joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     UNIQUE(event_id, user_id)
                 )
@@ -310,8 +312,11 @@ async def _create_tables(bot):
                 CREATE INDEX IF NOT EXISTS idx_quests_active ON quests(guild_id, active);
                 CREATE INDEX IF NOT EXISTS idx_discord_events_guild ON discord_scheduled_events(guild_id);
                 CREATE INDEX IF NOT EXISTS idx_discord_events_status ON discord_scheduled_events(status);
+                CREATE INDEX IF NOT EXISTS idx_discord_events_event_id ON discord_scheduled_events(event_id);
+                CREATE INDEX IF NOT EXISTS idx_discord_events_boost_id ON discord_scheduled_events(associated_boost_id);
                 CREATE INDEX IF NOT EXISTS idx_event_attendance_event ON event_attendance(event_id);
                 CREATE INDEX IF NOT EXISTS idx_event_attendance_user ON event_attendance(user_id);
+                CREATE INDEX IF NOT EXISTS idx_event_attendance_guild ON event_attendance(guild_id);
                 CREATE INDEX IF NOT EXISTS idx_guild_event_settings_guild ON guild_event_settings(guild_id);
             ''')
 
