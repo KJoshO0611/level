@@ -127,7 +127,11 @@ async def _create_tables(bot):
                 CREATE TABLE IF NOT EXISTS server_config (
                     guild_id TEXT PRIMARY KEY,
                     level_up_channel TEXT NOT NULL,
-                    event_channel TEXT
+                    quest_cooldowns JSONB DEFAULT '{}',
+                    achievement_channel TEXT,
+                    event_channel TEXT,
+                    quest_reset_hour INTEGER DEFAULT 0,
+                    quest_reset_day INTEGER DEFAULT 0
                 )
             ''')
 
