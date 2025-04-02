@@ -52,7 +52,7 @@ async def update_guild_event_settings(guild_id: str, settings: dict):
 async def log_scheduled_event(guild_id: str, event_id: str, name: str, description: str, start_time: datetime, end_time: datetime, event_type: str, status: str, creator_id: str):
     """Log or update a Discord scheduled event in the database."""
     query = """
-    INSERT INTO discord_scheduled_events (event_id, guild_id, name, description, start_time, end_time, event_type, status, creator_id, last_updated)
+    INSERT INTO discord_scheduled_events (event_id, guild_id, name, description, start_time, end_time, event_type, status, creator_id, updated_at)
     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
     ON CONFLICT (event_id) DO UPDATE SET
         name = EXCLUDED.name,
@@ -61,7 +61,7 @@ async def log_scheduled_event(guild_id: str, event_id: str, name: str, descripti
         end_time = EXCLUDED.end_time,
         event_type = EXCLUDED.event_type,
         status = EXCLUDED.status,
-        last_updated = NOW()
+        updated_at = NOW()
     RETURNING internal_id
     """
     async with get_connection() as conn:
@@ -71,7 +71,7 @@ async def log_scheduled_event(guild_id: str, event_id: str, name: str, descripti
 
 async def update_scheduled_event_status(event_id: str, status: str):
     """Update the status of a Discord scheduled event."""
-    query = "UPDATE discord_scheduled_events SET status = $1, last_updated = NOW() WHERE event_id = $2"
+    query = "UPDATE discord_scheduled_events SET status = $1, updated_at = NOW() WHERE event_id = $2"
     async with get_connection() as conn:
         await conn.execute(query, status, event_id)
     logging.info(f"Updated status for Discord event {event_id} to {status}")
@@ -93,7 +93,7 @@ async def get_scheduled_event_by_id(event_id: str) -> dict | None:
 async def record_event_attendance(event_id: str, guild_id: str, user_id: str):
     """Record a user's attendance (joining) for an event."""
     query = """
-    INSERT INTO event_attendance (event_id, guild_id, user_id, join_time)
+    INSERT INTO event_attendance (event_id, guild_id, user_id, joined_at)
     VALUES ($1, $2, $3, NOW())
     ON CONFLICT (event_id, user_id) DO NOTHING
     """
@@ -103,7 +103,7 @@ async def record_event_attendance(event_id: str, guild_id: str, user_id: str):
 
 async def get_event_attendees(event_id: str) -> list[dict]:
     """Get all users recorded as attending an event."""
-    query = "SELECT user_id, join_time FROM event_attendance WHERE event_id = $1"
+    query = "SELECT user_id, joined_at FROM event_attendance WHERE event_id = $1"
     async with get_connection() as conn:
         attendees = await conn.fetch(query, event_id)
         return [dict(row) for row in attendees]

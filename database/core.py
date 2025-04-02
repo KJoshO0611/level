@@ -255,6 +255,13 @@ async def _create_tables(bot):
                     event_channel_id TEXT,
                     event_role_id TEXT,
                     xp_reward INTEGER DEFAULT 100,
+                    enable_auto_boosts BOOLEAN DEFAULT FALSE,
+                    default_boost_voice REAL DEFAULT 1.5,
+                    default_boost_stage REAL DEFAULT 1.2,
+                    default_boost_external REAL DEFAULT 1.1,
+                    enable_attendance_rewards BOOLEAN DEFAULT FALSE,
+                    attendance_bonus_xp INTEGER DEFAULT 50,
+                    attendance_achievement_id TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
@@ -299,11 +306,13 @@ async def _create_tables(bot):
                 CREATE INDEX IF NOT EXISTS idx_user_achievements_completed ON user_achievements(completed);
                 CREATE INDEX IF NOT EXISTS idx_user_quests_user ON user_quests(guild_id, user_id);
                 CREATE INDEX IF NOT EXISTS idx_user_quests_completed ON user_quests(completed);
+                CREATE INDEX IF NOT EXISTS idx_user_quests_specific_progress ON user_quests(quest_specific_progress);
                 CREATE INDEX IF NOT EXISTS idx_quests_active ON quests(guild_id, active);
                 CREATE INDEX IF NOT EXISTS idx_discord_events_guild ON discord_scheduled_events(guild_id);
                 CREATE INDEX IF NOT EXISTS idx_discord_events_status ON discord_scheduled_events(status);
                 CREATE INDEX IF NOT EXISTS idx_event_attendance_event ON event_attendance(event_id);
                 CREATE INDEX IF NOT EXISTS idx_event_attendance_user ON event_attendance(user_id);
+                CREATE INDEX IF NOT EXISTS idx_guild_event_settings_guild ON guild_event_settings(guild_id);
             ''')
 
 async def health_check_loop(bot):
