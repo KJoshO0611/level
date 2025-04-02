@@ -243,6 +243,7 @@ async def _create_tables(bot):
                     accepted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     completed_at TIMESTAMP,
                     expires_at TIMESTAMP,
+                    quest_specific_progress INTEGER DEFAULT 0,
                     UNIQUE(guild_id, user_id, quest_id)
                 )
             ''')
