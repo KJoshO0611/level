@@ -64,6 +64,8 @@ try:
         get_event_attendees
     )
     from database.events import create_xp_boost_event, delete_xp_boost_event, update_xp_boost_start_time # Changed from database.xp_boost_events
+    # Import dashboard sync functions
+    from database.sync_dashboard import upsert_dashboard_user, upsert_dashboard_guild, sync_all_from_levels_table
     
     # Module imports for rewards
     from database.achievements import grant_achievement_db, check_event_attendance_achievements # Added the new check function
@@ -249,6 +251,11 @@ def setup_event_handlers(bot):
         if not success:
             root_logger.error("Failed to initialize some services. Bot may not function correctly.")
             print("ERROR: Failed to initialize services - check logs")
+        else:
+            # Run initial dashboard sync after services are up
+            root_logger.info("Starting initial sync to dashboard tables...")
+            await sync_all_from_levels_table(bot)
+            root_logger.info("Initial dashboard sync complete.")
         
         # Load cogs
         root_logger.info("Loading cogs...")
@@ -598,6 +605,46 @@ def setup_event_handlers(bot):
     root_logger.info("Scheduled event handlers registered successfully")
 
     root_logger.info("Event handlers registered successfully")
+
+    @bot.event
+    async def on_guild_join(guild):
+        """Called when the bot joins a new guild."""
+        root_logger.info(f"Joined new guild: {guild.name} ({guild.id})")
+        # Add guild info to dashboard table, passing the bot object
+        await upsert_dashboard_guild(bot, guild)
+
+    @bot.event
+    async def on_guild_update(before, after):
+        """Called when a guild's details change."""
+        if before.name != after.name or before.icon != after.icon or before.owner_id != after.owner_id:
+            root_logger.info(f"Guild {after.id} updated. Syncing changes to dashboard table.")
+            # Update guild info in dashboard table, passing the bot object
+            await upsert_dashboard_guild(bot, after)
+
+    @bot.event
+    async def on_member_join(member):
+        """Called when a new member joins a guild."""
+        root_logger.info(f"Member {member.name} ({member.id}) joined guild {member.guild.name} ({member.guild.id})")
+        # Add user info to dashboard table, passing the bot object
+        await upsert_dashboard_user(bot, member)
+        # Ensure the guild is also present, passing the bot object
+        await upsert_dashboard_guild(bot, member.guild)
+
+    @bot.event
+    async def on_member_update(before, after):
+        """Called when a member's details change (username, avatar, etc.)."""
+        if before.name != after.name or before.discriminator != after.discriminator or before.display_avatar != after.display_avatar:
+            root_logger.info(f"Member {after.id} updated in guild {after.guild.id}. Syncing changes to dashboard table.")
+            # Update user info in dashboard table, passing the bot object
+            await upsert_dashboard_user(bot, after)
+
+    @bot.event
+    async def on_user_update(before, after):
+        """Called when a user's global details change (username, avatar)."""
+        if before.name != after.name or before.discriminator != after.discriminator or before.avatar != after.avatar:
+            root_logger.info(f"User {after.id} updated globally. Syncing changes to dashboard table.")
+            # Update user info in dashboard table, passing the bot object
+            await upsert_dashboard_user(bot, after)
 
 
 async def cleanup_resources(bot):
