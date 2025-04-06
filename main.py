@@ -13,6 +13,7 @@ from discord.ext import commands
 import discord
 from datetime import datetime # Added for timezone awareness
 from discord.ext import tasks
+import json
 
 # Set up logging first thing
 log_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -64,6 +65,8 @@ try:
         get_event_attendees
     )
     from database.events import create_xp_boost_event, delete_xp_boost_event, update_xp_boost_start_time # Changed from database.xp_boost_events
+    # Import dashboard sync functions
+    from database.sync_dashboard import upsert_dashboard_user, upsert_dashboard_guild, sync_all_from_levels_table
     
     # Module imports for rewards
     from database.achievements import grant_achievement_db, check_event_attendance_achievements # Added the new check function
@@ -249,6 +252,11 @@ def setup_event_handlers(bot):
         if not success:
             root_logger.error("Failed to initialize some services. Bot may not function correctly.")
             print("ERROR: Failed to initialize services - check logs")
+        else:
+            # Run initial dashboard sync after services are up
+            root_logger.info("Starting initial sync to dashboard tables...")
+            await sync_all_from_levels_table(bot)
+            root_logger.info("Initial dashboard sync complete.")
         
         # Load cogs
         root_logger.info("Loading cogs...")
@@ -598,6 +606,169 @@ def setup_event_handlers(bot):
     root_logger.info("Scheduled event handlers registered successfully")
 
     root_logger.info("Event handlers registered successfully")
+
+    @bot.event
+    async def on_guild_join(guild: discord.Guild):
+        """Called when the bot joins a new guild."""
+        root_logger.info(f"Joined new guild: {guild.name} ({guild.id})")
+        # Add guild info to dashboard table, passing the bot object
+        await upsert_dashboard_guild(bot, guild)
+
+        # --- Add all existing members to the users table ---
+        root_logger.info(f"Starting initial member sync for guild {guild.id} ({guild.name})...")
+        members_synced = 0
+        members_failed = 0
+        admin_members_found = [] # Keep track of admins found during sync
+        try:
+            # Ensure member intent is loaded, might need fetch_members for large guilds
+            # For now, assume guild.members is sufficiently populated upon join
+            if not guild.chunked:
+                 root_logger.warning(f"Guild {guild.id} is not chunked. Member list might be incomplete. Consider using fetch_members.")
+                 # Optional: await guild.chunk() # Can be slow
+
+            total_members = guild.member_count or len(guild.members) # Use member_count if available
+            root_logger.info(f"Found {len(guild.members)} cached members (guild reports {total_members}). Upserting basic info...")
+
+            for member in guild.members:
+                try:
+                    # Skip bots if desired (optional)
+                    if member.bot:
+                       continue
+                    await upsert_dashboard_user(bot, member)
+                    members_synced += 1
+
+                    # Check for admin permissions
+                    if member.guild_permissions.administrator:
+                        admin_members_found.append(member.id)
+
+                    # Optional: Add a small sleep for very large guilds to prevent overwhelming resources
+                    # if members_synced % 100 == 0:
+                    #    await asyncio.sleep(0.1)
+                except Exception as member_error:
+                    members_failed += 1
+                    root_logger.error(f"Failed to upsert member {member.id} in guild {guild.id}: {member_error}")
+
+            root_logger.info(f"Finished initial basic member sync for guild {guild.id}. Synced: {members_synced}, Failed: {members_failed}")
+
+            # --- Update roles for admins found during sync ---
+            if admin_members_found:
+                root_logger.info(f"Attempting to assign 'admin' role to {len(admin_members_found)} members in guild {guild.id}...")
+                admins_updated = 0
+                admins_failed_update = 0
+                # Use bot.db directly assuming it's the asyncpg pool
+                if hasattr(bot, 'db') and bot.db:
+                    try:
+                        async with bot.db.acquire() as conn:
+                            # Prepare the statement for efficiency
+                            stmt = await conn.prepare("""
+                                UPDATE users
+                                SET role = $1::jsonb
+                                WHERE discord_id = $2 AND role = $3::jsonb
+                            """)
+                            admin_role_json = json.dumps(["admin"])
+                            user_role_json = json.dumps(["user"])
+
+                            for admin_id in admin_members_found:
+                                try:
+                                    # Ensure ID is integer for the query
+                                    result = await stmt.fetchval(admin_role_json, int(admin_id), user_role_json)
+                                    # Note: asyncpg's execute/fetchval doesn't return rows affected easily for UPDATE
+                                    # We assume success if no exception occurred for now.
+                                    # A more robust check might involve a SELECT COUNT(*) before/after or using RETURNING clause if needed.
+                                    admins_updated += 1 # Increment assuming success if no error
+                                except Exception as role_update_error:
+                                    admins_failed_update += 1
+                                    root_logger.error(f"Failed to update role for admin {admin_id} in guild {guild.id}: {role_update_error}")
+                        root_logger.info(f"Finished admin role assignment for guild {guild.id}. Attempted: {len(admin_members_found)}, Updated: {admins_updated}, Failed: {admins_failed_update}")
+                    except Exception as db_conn_error:
+                         root_logger.error(f"Database connection error during admin role update for guild {guild.id}: {db_conn_error}")
+                else:
+                     root_logger.error(f"Database pool (bot.db) not available for admin role update in guild {guild.id}.")
+            else:
+                root_logger.info(f"No admin members identified during sync for guild {guild.id}.")
+
+        except Exception as e:
+            root_logger.error(f"Error during bulk member sync or role assignment for guild {guild.id}: {e}")
+        # --- End member sync ---
+
+    @bot.event
+    async def on_guild_update(before, after):
+        """Called when a guild's details change."""
+        if before.name != after.name or before.icon != after.icon or before.owner_id != after.owner_id:
+            root_logger.info(f"Guild {after.id} updated. Syncing changes to dashboard table.")
+            # Update guild info in dashboard table, passing the bot object
+            await upsert_dashboard_guild(bot, after)
+
+    @bot.event
+    async def on_member_join(member):
+        """Called when a new member joins a guild."""
+        root_logger.info(f"Member {member.name} ({member.id}) joined guild {member.guild.name} ({member.guild.id})")
+        if member.bot: # Skip bots
+             return
+
+        # Add user's basic info to dashboard table
+        await upsert_dashboard_user(bot, member)
+        # Ensure the guild is also present (idempotent)
+        await upsert_dashboard_guild(bot, member.guild)
+
+        # --- Assign admin role if applicable ---
+        if member.guild_permissions.administrator:
+            root_logger.info(f"New member {member.id} has admin permissions in guild {member.guild.id}. Attempting role update.")
+            if hasattr(bot, 'db') and bot.db:
+                try:
+                    async with bot.db.acquire() as conn:
+                        admin_role_json = json.dumps(["admin"])
+                        user_role_json = json.dumps(["user"])
+                        await conn.execute("""
+                            UPDATE users SET role = $1::jsonb
+                            WHERE discord_id = $2 AND role = $3::jsonb
+                        """, admin_role_json, member.id, user_role_json)
+                        root_logger.info(f"Assigned 'admin' role to new member {member.id}.")
+                except Exception as e:
+                    root_logger.error(f"Failed to update role for new admin member {member.id}: {e}")
+            else:
+                root_logger.error(f"Database pool (bot.db) not available for new member role update (member: {member.id}).")
+        # --- End role assignment ---
+
+    @bot.event
+    async def on_member_update(before, after):
+        """Called when a member's details change (username, avatar, etc.)."""
+        # Upsert basic info on profile changes
+        if before.name != after.name or before.discriminator != after.discriminator or before.display_avatar != after.display_avatar:
+            root_logger.info(f"Member {after.id} updated profile in guild {after.guild.id}. Syncing changes to dashboard table.")
+            await upsert_dashboard_user(bot, after)
+
+        # --- Handle potential permission changes ---
+        # Check if permissions might have changed (specifically gaining admin)
+        # Note: This check is simplified. Role changes are a better indicator but more complex to track.
+        if not before.guild_permissions.administrator and after.guild_permissions.administrator:
+            root_logger.info(f"Member {after.id} gained admin permissions in guild {after.guild.id}. Attempting role update.")
+            if hasattr(bot, 'db') and bot.db:
+                 try:
+                    async with bot.db.acquire() as conn:
+                        admin_role_json = json.dumps(["admin"])
+                        user_role_json = json.dumps(["user"])
+                        await conn.execute("""
+                            UPDATE users SET role = $1::jsonb
+                            WHERE discord_id = $2 AND role = $3::jsonb
+                        """, admin_role_json, after.id, user_role_json)
+                        root_logger.info(f"Assigned 'admin' role to updated member {after.id}.")
+                 except Exception as e:
+                    root_logger.error(f"Failed to update role for updated admin member {after.id}: {e}")
+            else:
+                 root_logger.error(f"Database pool (bot.db) not available for member update role assignment (member: {after.id}).")
+        # Optional: Handle losing admin permissions (could reset role to 'user')
+        # elif before.guild_permissions.administrator and not after.guild_permissions.administrator:
+        #     # Logic to potentially downgrade role from 'admin' back to 'user' if appropriate
+        #     pass
+
+    @bot.event
+    async def on_user_update(before, after):
+        """Called when a user's global details change (username, avatar)."""
+        if before.name != after.name or before.discriminator != after.discriminator or before.avatar != after.avatar:
+            root_logger.info(f"User {after.id} updated globally. Syncing changes to dashboard table.")
+            # Update user info in dashboard table, passing the bot object
+            await upsert_dashboard_user(bot, after)
 
 
 async def cleanup_resources(bot):
