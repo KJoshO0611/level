@@ -2,6 +2,7 @@ import logging
 from typing import Optional
 import discord
 import asyncpg
+import json
 
 # Assuming 'get_connection' is available from core.py or similar
 # We now pass the bot object instead of importing the pool directly
@@ -17,23 +18,27 @@ async def upsert_dashboard_user(bot: discord.Client, user: discord.User | discor
         logging.error("Database pool not available in bot object for upsert_dashboard_user")
         return
 
+    # Define the default role
+    default_role_json = json.dumps(["user"])
+
     query = """
-        INSERT INTO users (discord_id, username, discriminator, avatar)
-        VALUES ($1, $2, $3, $4)
+        INSERT INTO users (discord_id, username, discriminator, avatar, role)
+        VALUES ($1, $2, $3, $4, $5::jsonb)
         ON CONFLICT (discord_id) DO UPDATE SET
             username = EXCLUDED.username,
             discriminator = EXCLUDED.discriminator,
             avatar = EXCLUDED.avatar;
     """
-    # Ensure discord_id is BIGINT
-    discord_id = user.id
+    # Ensure discord_id is BIGINT but passed as a string
+    discord_id_str = str(user.id)
     # Handle potential None avatar
     avatar_url = str(user.display_avatar.url) if user.display_avatar else None
 
     try:
         # Use bot.db to acquire connection
         async with bot.db.acquire() as conn:
-            await conn.execute(query, discord_id, user.name, user.discriminator, avatar_url)
+            # Pass discord_id as string
+            await conn.execute(query, discord_id_str, user.name, user.discriminator, avatar_url, default_role_json)
         # logging.debug(f"Upserted user {user.id} ({user.name}) into dashboard users table.")
     except Exception as e:
         logging.error(f"Error upserting dashboard user {user.id}: {e}")
@@ -48,26 +53,40 @@ async def upsert_dashboard_guild(bot: discord.Client, guild: discord.Guild):
         logging.error("Database pool not available in bot object for upsert_dashboard_guild")
         return
 
+    # Assuming a 'preferred_locale' text column might exist, causing the $7 error.
+    # Also adding back created_at and channel_count
     query = """
-        INSERT INTO guilds (guild_id, name, icon, owner_id)
-        VALUES ($1, $2, $3, $4)
+        INSERT INTO guilds (guild_id, name, icon, owner_id, preferred_locale, created_at, channel_count)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
         ON CONFLICT (guild_id) DO UPDATE SET
             name = EXCLUDED.name,
             icon = EXCLUDED.icon,
-            owner_id = EXCLUDED.owner_id;
+            owner_id = EXCLUDED.owner_id,
+            preferred_locale = EXCLUDED.preferred_locale,
+            created_at = EXCLUDED.created_at,
+            channel_count = EXCLUDED.channel_count;
     """
-    # Ensure guild_id and owner_id are BIGINT
-    guild_id = guild.id
-    owner_id = guild.owner_id
+    # Ensure IDs are BIGINT but passed as strings
+    guild_id_str = str(guild.id)
+    owner_id_str = str(guild.owner_id)
     # Handle potential None icon
     icon_url = str(guild.icon.url) if guild.icon else None
+    # Get locale as string
+    locale_str = str(guild.preferred_locale)
+    # Get created_at (datetime object is usually fine for asyncpg)
+    created_at = guild.created_at
+    # Get channel count
+    channel_count = len(guild.channels)
 
     try:
         # Use bot.db to acquire connection
         async with bot.db.acquire() as conn:
-            await conn.execute(query, guild_id, guild.name, icon_url, owner_id)
+            # Pass IDs and locale as strings, created_at as datetime, channel_count as int
+            await conn.execute(query, guild_id_str, guild.name, icon_url, owner_id_str, locale_str, created_at, channel_count)
         # logging.debug(f"Upserted guild {guild.id} ({guild.name}) into dashboard guilds table.")
     except Exception as e:
+        # The error message might still mention $7 if the root cause is different,
+        # but we log the guild.id for context.
         logging.error(f"Error upserting dashboard guild {guild.id}: {e}")
 
 async def sync_all_from_levels_table(bot: discord.Client):
@@ -92,12 +111,13 @@ async def sync_all_from_levels_table(bot: discord.Client):
 
         for record in records:
             try:
+                # Use integer IDs for discord.py functions
                 guild_id = int(record['guild_id'])
                 user_id = int(record['user_id'])
 
                 # Upsert Guild Info (if not already processed)
                 if guild_id not in processed_guilds:
-                    guild = bot.get_guild(guild_id)
+                    guild = bot.get_guild(guild_id) # Pass integer ID
                     if guild:
                         # Pass bot object to upsert function
                         await upsert_dashboard_guild(bot, guild)
@@ -107,11 +127,11 @@ async def sync_all_from_levels_table(bot: discord.Client):
 
                 # Upsert User Info (if not already processed)
                 if user_id not in processed_users:
-                    user = bot.get_user(user_id)
+                    user = bot.get_user(user_id) # Pass integer ID
                     # If user not in cache, try fetching (might be slow)
                     if not user:
                         try:
-                            user = await bot.fetch_user(user_id)
+                            user = await bot.fetch_user(user_id) # Pass integer ID
                         except discord.NotFound:
                             logging.warning(f"Could not find user {user_id} via API during sync.")
                         except discord.HTTPException as http_err:

@@ -259,11 +259,6 @@ def setup_event_handlers(bot):
             root_logger.info("Starting initial sync to dashboard tables...")
             await sync_all_from_levels_table(bot)
             root_logger.info("Initial dashboard sync complete.")
-        else:
-            # Run initial dashboard sync after services are up
-            root_logger.info("Starting initial sync to dashboard tables...")
-            await sync_all_from_levels_table(bot)
-            root_logger.info("Initial dashboard sync complete.")
         
         # Load cogs
         root_logger.info("Loading cogs...")
@@ -677,8 +672,8 @@ def setup_event_handlers(bot):
 
                             for admin_id in admin_members_found:
                                 try:
-                                    # Ensure ID is integer for the query
-                                    result = await stmt.fetchval(admin_role_json, int(admin_id), user_role_json)
+                                    # Ensure ID is passed as string for the query
+                                    result = await stmt.fetchval(admin_role_json, str(admin_id), user_role_json)
                                     # Note: asyncpg's execute/fetchval doesn't return rows affected easily for UPDATE
                                     # We assume success if no exception occurred for now.
                                     # A more robust check might involve a SELECT COUNT(*) before/after or using RETURNING clause if needed.
