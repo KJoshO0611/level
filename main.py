@@ -67,6 +67,8 @@ try:
     from database.events import create_xp_boost_event, delete_xp_boost_event, update_xp_boost_start_time # Changed from database.xp_boost_events
     # Import dashboard sync functions
     from database.sync_dashboard import upsert_dashboard_user, upsert_dashboard_guild, sync_all_from_levels_table
+    # Import dashboard sync functions
+    from database.sync_dashboard import upsert_dashboard_user, upsert_dashboard_guild, sync_all_from_levels_table
     
     # Module imports for rewards
     from database.achievements import grant_achievement_db, check_event_attendance_achievements # Added the new check function
@@ -252,6 +254,11 @@ def setup_event_handlers(bot):
         if not success:
             root_logger.error("Failed to initialize some services. Bot may not function correctly.")
             print("ERROR: Failed to initialize services - check logs")
+        else:
+            # Run initial dashboard sync after services are up
+            root_logger.info("Starting initial sync to dashboard tables...")
+            await sync_all_from_levels_table(bot)
+            root_logger.info("Initial dashboard sync complete.")
         else:
             # Run initial dashboard sync after services are up
             root_logger.info("Starting initial sync to dashboard tables...")
